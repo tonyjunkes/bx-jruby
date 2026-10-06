@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Verify module
+    # Manual dispatch has no branch filter; releases are restricted to main.
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/checks.yml
+
+  publish:
+    name: Tag and publish
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Download tested distribution
+        uses: actions/download-artifact@v8
+        with:
+          name: bx-jruby-distribution
+          path: build/distributions
+      - name: Prepare verified release package
+        id: release
+        run: |
+          version="$(jq -er '.version' box.json)"
+          archive="bx-jruby-$version.zip"
+          (cd build/distributions && sha256sum --check "$archive.sha256")
+          package_dir="$RUNNER_TEMP/bx-jruby-release"
+          mkdir -p "$package_dir"
+          unzip -q "build/distributions/$archive" -d "$package_dir"
+          # Publish the checked artifact, with its compiled module and bundled JRuby.
+          cmp box.json "$package_dir/box.json"
+          cmp src/main/bx/ModuleConfig.bx "$package_dir/ModuleConfig.bx"
+          test -s "$package_dir/libs/bx-jruby-$version.jar"
+          jruby_version="$(sed -n 's/^jrubyVersion=//p' gradle.properties | tr -d '\r')"
+          test -s "$package_dir/libs/jruby-complete-$jruby_version.jar"
+          {
+            echo "version=$version"
+            echo "tag=$version"
+            echo "package-dir=$package_dir"
+          } >> "$GITHUB_OUTPUT"
+      - name: Require release credentials
+        env:
+          FORGEBOX_API_TOKEN: ${{ secrets.FORGEBOX_API_TOKEN }}
+        run: |
+          if [[ -z "$FORGEBOX_API_TOKEN" ]]; then
+            echo 'Add a FORGEBOX_API_TOKEN repository secret before releasing.' >&2
+            exit 1
+          fi
+      - name: Set up Java 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up CommandBox
+        uses: Ortus-Solutions/setup-commandbox@v2.0.1
+      - name: Configure ForgeBox credentials
+        env:
+          FORGEBOX_API_TOKEN: ${{ secrets.FORGEBOX_API_TOKEN }}
+        run: box config set "endpoints.forgebox.APIToken=$FORGEBOX_API_TOKEN" > /dev/null
+      - name: Tag release commit
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+            tag_commit="$(git rev-list -n 1 "$TAG")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "$TAG already points to $tag_commit; refusing to move it to $GITHUB_SHA." >&2
+              exit 1
+            fi
+            echo "$TAG already points to this commit; continuing the release."
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag --annotate "$TAG" --message "Release $TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+      - name: Publish built package to ForgeBox
+        env:
+          PACKAGE_DIR: ${{ steps.release.outputs.package-dir }}
+        run: box forgebox publish "directory=$PACKAGE_DIR" --force
+      - name: Create GitHub release and upload distribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub release $TAG already exists."
+          else
+            flags=()
+            if [[ "${TAG%%+*}" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$TAG" --verify-tag --title "bx-jruby $VERSION" --generate-notes "${flags[@]}"
+          fi
+          # Reruns can complete an interrupted upload for the same tagged commit.
+          gh release upload "$TAG" "build/distributions/bx-jruby-$VERSION.zip" \
+            "build/distributions/bx-jruby-$VERSION.zip.sha256" --clobber

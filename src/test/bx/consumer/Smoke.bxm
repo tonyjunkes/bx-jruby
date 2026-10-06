@@ -1,0 +1,73 @@
+<bx:script>
+import ortus.boxlang.runtime.scopes.Key;
+function check(condition, message) {
+    if (!condition) throw(type="bxjruby.tests.Failure", message=message);
+}
+check(getBoxRuntime().getModuleService().hasModule("bxjruby"), "Module is not activated");
+record = getBoxRuntime().getModuleService().getModuleRecord("bxjruby");
+check(record.moduleConfig.getClass().getName() == "ortus.boxlang.runtime.modules.BoxModuleConfig", "BoxLang descriptor is not active");
+manifest = JSONDeserialize(fileRead(record.physicalPath.resolve("box.json").toString()));
+check(record.author == manifest.author && record.version == manifest.version, "Descriptor metadata");
+check(record.settings.workingDirectory == "" && arrayLen(record.settings.loadPaths) == 0, "Descriptor defaults");
+result = jrubyEval("puts 'héllo 🦊'; warn 'warning'; values.sum", { values: [10, 20, 30] });
+check(result.value == 60, "Bindings and value conversion");
+check(result.stdout == "héllo 🦊" & char(10), "Unicode stdout capture");
+check(result.stderr == "warning" & char(10), "Stderr capture");
+check(jrubyEvalFile("/ruby-fixtures/main.rb", { amount: 1 }).value == 42, "Mapped file and require_relative");
+check(jrubyEval("require 'json'; JSON.generate({answer: 42})").value == '{"answer":42}', "Bundled standard library");
+check(jrubyEval("defined?(FIXTURE_VALUE)").value == null, "One-shot isolation");
+exitOutput = jrubyEval("at_exit { puts 'finished' }; 1");
+check(exitOutput.stdout == "finished" & char(10), "at_exit capture");
+ruby = jrubySession({ workingDirectory: expandPath("/ruby-fixtures") });
+try {
+    ruby.evalFile("greeter.rb");
+    greeter = ruby.eval("Greeter.new").value;
+    check(ruby.call(greeter, "greet", ["BoxLang"], { prefix: "Hi" }).value == "Hi, BoxLang", "Object and kwargs");
+    ruby.put("counter", 0);
+    ruby.eval("counter += 1");
+    check(ruby.get("counter") == 1, "Persistent locals");
+} finally {
+    ruby.close();
+}
+gems = jrubySession({ gemHome: expandPath("../resources/gems"), gemPaths: [expandPath("../resources/gems")] });
+try {
+    check(gems.eval("require 'bx_fixture'; BXFixture::VALUE").value == 73, "Packaged runtime gem support");
+} finally { gems.close(); }
+failureCaught = false;
+try { jrubyEvalFile("/ruby-fixtures/failure.rb"); }
+catch (any error) {
+    failureCaught = error.message contains "fixture error";
+}
+check(failureCaught, "Catchable Ruby errors");
+</bx:script>
+<bx:include template="/jruby-tests/Inline.bxm">
+<bx:script>
+check(variables.inlineResult.value == 42, "Inline tag value");
+check(variables.inlineResult.stdout == "Hello, BoxLang" & char(10), "Inline Ruby interpolation");
+stale = jrubySession();
+staleHandle = stale.eval("Object.new").value;
+boxModuleReload("bxjruby");
+check(stale.isClosed(), "Reload did not close session");
+check(jrubyEval("2 + 3").value == 5, "Function after reload");
+fresh = jrubySession();
+rejected = false;
+try { fresh.eval("input", { input: staleHandle }); }
+catch (any error) { rejected = true; }
+finally { fresh.close(); }
+check(rejected, "Reload accepted stale Ruby handle");
+</bx:script>
+<bx:include template="/jruby-tests/Inline.bxm">
+<bx:script>
+check(variables.inlineResult.value == 42, "Tag after reload");
+unloadSession = jrubySession();
+moduleService = getBoxRuntime().getModuleService();
+moduleService.unload(Key::of("bxjruby"), false);
+check(unloadSession.isClosed(), "Unload did not close session");
+for (functionName in ["jrubyEval", "jrubyEvalFile", "jrubySession"]) {
+    check(!getBoxRuntime().getFunctionService().hasGlobalFunction(functionName), "Unload left BIF registered: " & functionName);
+}
+check(!getBoxRuntime().getComponentService().hasComponent("jruby"), "Unload left component registered");
+boxModuleReload("bxjruby");
+check(jrubyEval("1 + 2").value == 3, "Reload after explicit unload");
+println("Packaged bx-jruby consumer checks passed");
+</bx:script>

@@ -1,0 +1,5 @@
+.gradle/
+.boxlang/
+build/
+testbox/
+*.log

@@ -1,0 +1,8 @@
+{
+    "modulesDirectory": ["${user-dir}/build/consumer/modules"],
+    "modules": { "bxjruby": { "enabled": true } },
+    "mappings": {
+        "/ruby-fixtures": "${user-dir}/src/test/bx/resources/ruby",
+        "/jruby-tests": "${user-dir}/src/test/bx/resources"
+    }
+}

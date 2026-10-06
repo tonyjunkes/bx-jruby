@@ -1,0 +1,15 @@
+function check(condition, message) {
+    if (!condition) throw(type="bxjruby.tests.Failure", message=message);
+}
+check(jrubyEval("require 'helper'; FIXTURE_VALUE").value == 41, "Configured module loadPaths");
+check(jrubyEval("require 'bx_fixture'; BXFixture::VALUE").value == 73, "Configured module gem paths");
+ruby = jrubySession();
+try {
+    check(ruby.evalFile("main.rb", { amount: 1 }).value == 42, "Configured module working directory");
+} finally { ruby.close(); }
+withoutPaths = jrubySession({ loadPaths: [] });
+try {
+    check(withoutPaths.eval("$LOAD_PATH.include?(Dir.pwd)").value == false, "Per-session list replaces module default");
+    check(withoutPaths.eval("require 'json'; JSON.generate({})").value == "{}", "Override retains stdlib");
+} finally { withoutPaths.close(); }
+println("Module configuration override checks passed");

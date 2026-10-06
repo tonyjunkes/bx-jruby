@@ -1,0 +1,41 @@
+class {
+    property name="moduleRecord";
+    property name="boxRuntime";
+    property name="log";
+
+    this.title = "bx-jruby";
+    this.author = "Tony Junkes";
+    this.description = "JRuby support in BoxLang.";
+    this.version = "1.0.0";
+    this.mapping = "bxjruby";
+
+    function configure() {
+        // BoxLang merges application overrides into these defaults after configure().
+        variables.settings = {
+            workingDirectory: "",
+            loadPaths: [],
+            gemHome: "",
+            gemPaths: []
+        };
+    }
+
+    function onLoad() {
+        // Resolve the bridge through this activation's loader, including after reload.
+        variables.runtimeBridge = createObject(
+            type = "java",
+            className = "modules.bxjruby.JRubyRuntime",
+            classLoader = moduleRecord.getModuleClassLoader().toClassLoader()
+        );
+        variables.runtimeBridge.start(moduleRecord);
+    }
+
+    function onUnload() {
+        try {
+            if (structKeyExists(variables, "runtimeBridge") && !isNull(variables.runtimeBridge)) {
+                variables.runtimeBridge.stop(boxRuntime, moduleRecord.name.getName());
+            }
+        } finally {
+            variables.runtimeBridge = null;
+        }
+    }
+}

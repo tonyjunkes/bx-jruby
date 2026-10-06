@@ -1,0 +1,141 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'modules.bxjruby'
+repositories { mavenCentral() }
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    withSourcesJar()
+}
+
+dependencies {
+    compileOnly "io.boxlang:boxlang:${boxlangVersion}"
+    // Artifact-only resolution avoids the POM's relocation to the split jruby artifact.
+    implementation "org.jruby:jruby-complete:${jrubyVersion}@jar"
+    testImplementation "io.boxlang:boxlang:${boxlangVersion}"
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.14.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.register('verifyModuleMetadata') {
+    inputs.files('box.json', 'gradle.properties', 'src/main/bx/ModuleConfig.bx')
+    def releaseVersion = project.version.toString()
+    inputs.property('version', releaseVersion)
+    doLast {
+        def manifest = new groovy.json.JsonSlurper().parse(file('box.json'))
+        def configuredProperties = new Properties()
+        file('gradle.properties').withReader('UTF-8') { configuredProperties.load(it) }
+        def semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+        if (!(releaseVersion ==~ semver)) throw new GradleException("Invalid module release version: ${releaseVersion}")
+        def descriptors = file('src/main/bx/ModuleConfig.bx').getText('UTF-8') =~ /(?m)^\s*this\.version\s*=\s*"([^"]+)"\s*;/
+        if (descriptors.count != 1 || manifest.version != releaseVersion ||
+            configuredProperties.getProperty('version') != releaseVersion || descriptors[0][1] != releaseVersion)
+            throw new GradleException('box.json, gradle.properties, and ModuleConfig.bx versions must match')
+        if (manifest.slug != 'bx-jruby' || manifest.boxlang?.moduleName != 'bxjruby')
+            throw new GradleException('The package slug must be bx-jruby and runtime moduleName must be bxjruby')
+    }
+}
+
+tasks.register('createModuleStructure', Sync) {
+    dependsOn jar, verifyModuleMetadata
+    into layout.buildDirectory.dir('module')
+    from(tasks.jar) { into 'libs' }
+    from(configurations.runtimeClasspath) { into 'libs' }
+    from('src/main/bx')
+    from('.') { include 'box.json', 'README.md', 'SKILL.md', 'CHANGELOG.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md' }
+}
+
+tasks.register('moduleZip', Zip) {
+    dependsOn createModuleStructure
+    from(layout.buildDirectory.dir('module'))
+    archiveFileName = "bx-jruby-${version}.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+}
+
+tasks.register('moduleChecksum') {
+    dependsOn moduleZip
+    def archive = tasks.named('moduleZip', Zip).flatMap { it.archiveFile }
+    def checksum = layout.buildDirectory.file("distributions/bx-jruby-${version}.zip.sha256")
+    inputs.file(archive)
+    outputs.file(checksum)
+    doLast {
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        archive.get().asFile.withInputStream { stream ->
+            new java.security.DigestInputStream(stream, digest).transferTo(java.io.OutputStream.nullOutputStream())
+        }
+        def hash = java.util.HexFormat.of().formatHex(digest.digest())
+        checksum.get().asFile.setText("${hash}  ${archive.get().asFile.name}\n", 'US-ASCII')
+    }
+}
+
+tasks.named('assemble') { dependsOn moduleChecksum }
+
+test {
+    useJUnitPlatform()
+    maxHeapSize = '1g'
+    systemProperty 'file.encoding', 'UTF-8'
+    testLogging { events 'failed', 'skipped' }
+}
+
+tasks.register('prepareConsumer', Sync) {
+    dependsOn moduleZip
+    from({ zipTree(tasks.moduleZip.archiveFile.get().asFile) })
+    into layout.buildDirectory.dir('consumer/modules/bx-jruby')
+}
+
+tasks.register('consumerTest', JavaExec) {
+    dependsOn prepareConsumer
+    classpath = configurations.testRuntimeClasspath.filter { it.name.startsWith('boxlang-') }
+    mainClass = 'ortus.boxlang.runtime.BoxRunner'
+    args '--bx-home', layout.buildDirectory.dir('consumer/home').get().asFile.absolutePath,
+        '--bx-config', file('src/test/bx/consumer/boxlang.json').absolutePath,
+        file('src/test/bx/consumer/Smoke.bxm').absolutePath
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    systemProperty 'file.encoding', 'UTF-8'
+}
+
+tasks.named('check') { dependsOn consumerTest }
+
+tasks.register('consumerOverrideTest', JavaExec) {
+    dependsOn prepareConsumer
+    classpath = configurations.testRuntimeClasspath.filter { it.name.startsWith('boxlang-') }
+    mainClass = 'ortus.boxlang.runtime.BoxRunner'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    args '--bx-home', layout.buildDirectory.dir('consumer-override/home').get().asFile.absolutePath,
+        '--bx-config', file('src/test/bx/consumer/boxlang.override.json').absolutePath,
+        file('src/test/bx/consumer/Overrides.bxs').absolutePath
+}
+
+tasks.named('check') { dependsOn consumerOverrideTest }
+
+tasks.register('testBox', JavaExec) {
+    dependsOn prepareConsumer
+    classpath = configurations.testRuntimeClasspath.filter { it.name.startsWith('boxlang-') }
+    mainClass = 'ortus.boxlang.runtime.BoxRunner'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    args '--bx-home', layout.buildDirectory.dir('consumer/home').get().asFile.absolutePath,
+        '--bx-config', file('src/test/bx/consumer/boxlang.json').absolutePath,
+        file('testbox/system/runners/BoxLangRunner.bx').absolutePath,
+        '--directory=src.test.bx.specs', '--stream', '--write-report=true', '--write-json-report=true',
+        "--reportpath=${layout.buildDirectory.dir('testbox').get().asFile.absolutePath}", '--properties-summary=false', '--stacktrace=short'
+    doFirst {
+        if (!file('testbox/system/runners/BoxLangRunner.bx').exists()) throw new GradleException('Run box install before testBox')
+        delete layout.buildDirectory.dir('testbox').get().asFile
+    }
+    doLast {
+        def report = new groovy.json.JsonSlurper().parse(file('build/testbox/report.json'))
+        if (report.totalFail != 0 || report.totalError != 0 || report.totalPass <= 0) throw new GradleException('TestBox reported failures or no passing tests')
+    }
+}

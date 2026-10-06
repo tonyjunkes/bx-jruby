@@ -1,0 +1,1 @@
+FIXTURE_VALUE = 41

@@ -1,0 +1,54 @@
+{
+  "name": "BoxLang JRuby Support",
+  "version": "1.0.0",
+  "location": "",
+  "author": "Tony Junkes",
+  "homepage": "https://github.com/tonyjunkes/bx-jruby",
+  "documentation": "https://github.com/tonyjunkes/bx-jruby",
+  "bugs": "https://github.com/tonyjunkes/bx-jruby/issues",
+  "repository": {
+    "type": "git",
+    "URL": "https://github.com/tonyjunkes/bx-jruby"
+  },
+  "changelog": "https://github.com/tonyjunkes/bx-jruby/blob/main/CHANGELOG.md",
+  "slug": "bx-jruby",
+  "shortDescription": "Run Ruby code in BoxLang with JRuby, explicit bindings, and reusable sessions.",
+  "type": "boxlang-modules",
+  "keywords": [
+    "boxlang",
+    "jruby",
+    "ruby"
+  ],
+  "boxlang": {
+    "minimumVersion": "1.18.0",
+    "moduleName": "bxjruby"
+  },
+  "private": false,
+  "license": [
+    {
+      "type": "MIT",
+      "URL": "https://opensource.org/licenses/MIT"
+    }
+  ],
+  "devDependencies": {
+    "testbox": "^7.1.0+20"
+  },
+  "installPaths": {
+    "testbox": "testbox/"
+  },
+  "scripts": {
+    "test": "boxlang cli --bx-home build/consumer/home --bx-config src/test/bx/consumer/boxlang.json testbox/system/runners/BoxLangRunner.bx --directory=src.test.bx.specs --stream --write-report=true --write-json-report=true --reportpath=../../../build/testbox --properties-summary=false --stacktrace=short"
+  },
+  "ignore": [
+    "**/.*",
+    "src/**",
+    "testbox/**",
+    "gradle/**",
+    "gradlew",
+    "gradlew.bat",
+    "*.gradle",
+    "gradle.properties",
+    "build/**",
+    "examples/**"
+  ]
+}

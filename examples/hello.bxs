@@ -1,0 +1,3 @@
+result = jrubyEval("puts 'Hello from Ruby'; values.sum", { values: [10, 20, 30] });
+println(result.value);
+print(result.stdout);

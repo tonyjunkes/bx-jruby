@@ -1,0 +1,7 @@
+<bx:script>
+input = { name: "BoxLang" };
+</bx:script>
+<bx:output><bx:jruby variable="variables.inlineResult" bindings="#input#">
+puts "Hello, ##{name}"
+42
+</bx:jruby></bx:output>

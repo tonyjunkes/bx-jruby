@@ -1,0 +1,117 @@
+class extends="testbox.system.BaseSpec" {
+    function run() {
+        describe("Installed bx-jruby public API", () => {
+            it("activates the installed package", () => {
+                expect(getBoxRuntime().getModuleService().hasModule("bxjruby")).toBeTrue();
+                var record = getBoxRuntime().getModuleService().getModuleRecord("bxjruby");
+                expect(fileExists(record.physicalPath.resolve("libs/bx-jruby-" & record.version & ".jar").toString())).toBeTrue();
+                expect(record.moduleConfig.getClass().getName()).toBe("ortus.boxlang.runtime.modules.BoxModuleConfig");
+                var manifest = JSONDeserialize(fileRead(record.physicalPath.resolve("box.json").toString()));
+                expect(record.author).toBe(manifest.author);
+                expect(record.version).toBe(manifest.version);
+            });
+            it("evaluates explicit native collection bindings", () => {
+                var input = { amounts: [4, 5] };
+                expect(jrubyEval("amounts << 6; amounts.sum", input).value).toBe(15);
+                expect(input.amounts).toBe([4, 5]);
+            });
+            it("captures separate output streams", () => {
+                var result = jrubyEval("puts 'hello'; warn 'problem'; 42");
+                expect(result.value).toBe(42);
+                expect(result.stdout).toBe("hello" & char(10));
+                expect(result.stderr).toBe("problem" & char(10));
+            });
+            it("isolates one-shot runtime state", () => {
+                jrubyEval("STATE = 1; $state = 2; count = 3; nil");
+                expect(isNull(jrubyEval("defined?(STATE)").value)).toBeTrue();
+                expect(isNull(jrubyEval("defined?($state)").value)).toBeTrue();
+                expect(isNull(jrubyEval("defined?(count)").value)).toBeTrue();
+            });
+            it("loads mapped files and relative Ruby dependencies", () => {
+                expect(jrubyEvalFile("/ruby-fixtures/main.rb", { amount: 1 }).value).toBe(42);
+            });
+            it("loads JRuby's bundled standard library", () => {
+                expect(jrubyEval("require 'json'; JSON.generate({answer: 42})").value).toBe('{"answer":42}');
+            });
+            it("preserves nested nulls and key case", () => {
+                var result = jrubyEval("{'Name' => [nil, true], 'name' => 2 ** 100}").value;
+                expect(structCount(result)).toBe(2);
+                expect(isNull(result["Name"][1])).toBeTrue();
+                expect(result["Name"][2]).toBeTrue();
+                expect(result["name"].toString()).toBe("1267650600228229401496703205376");
+            });
+            it("copies high precision decimal bindings and results", () => {
+                var amount = createObject("java", "java.math.BigDecimal").init("12345678901234567890.123456789");
+                var result = jrubyEval("amount + 1", { amount: amount }).value;
+                expect(result.toString()).toBe("12345678901234567891.123456789");
+            });
+            it("reuses a session with handles and keyword calls", () => {
+                var ruby = jrubySession({ workingDirectory: expandPath("/ruby-fixtures") });
+                try {
+                    ruby.evalFile("greeter.rb");
+                    var greeter = ruby.eval("Greeter.new").value;
+                    expect(ruby.call(greeter, "greet", ["BoxLang"], { prefix: "Hi" }).value).toBe("Hi, BoxLang");
+                    ruby.put("count", 1);
+                    ruby.eval("count += 1");
+                    expect(ruby.get("count")).toBe(2);
+                } finally { ruby.close(); }
+                ruby.close();
+                expect(() => ruby.eval("1")).toThrow();
+            });
+            it("rejects runtime-owned one-shot results and lossy hashes", () => {
+                expect(() => jrubyEval("[Object.new]")).toThrow();
+                expect(() => jrubyEval("{1 => 'number'}")).toThrow();
+                expect(() => jrubyEval("{:name => 1, 'name' => 2}")).toThrow();
+                expect(() => jrubyEval("a = []; a << a; a")).toThrow();
+            });
+            it("reports syntax, runtime, file and require errors", () => {
+                expect(() => jrubyEval("def invalid(")).toThrow();
+                expect(() => jrubyEval("raise 'error'")).toThrow();
+                expect(() => jrubyEvalFile("/ruby-fixtures/missing.rb")).toThrow();
+                expect(() => jrubyEval("require 'bx_nonexistent'")).toThrow();
+            });
+            it("exposes Ruby error diagnostics including exit-handler output", () => {
+                var caught = false;
+                try { jrubyEval("at_exit { puts 'after' }; puts 'before'; warn 'stderr'; raise 'error'"); }
+                catch (any error) {
+                    caught = true;
+                    expect(error.getStdout()).toBe("before" & char(10) & "after" & char(10));
+                    expect(error.getStderr()).toBe("stderr" & char(10));
+                    expect(error.getSource()).toBe("(eval)");
+                    expect(error.getRubyBacktrace().size()).toBeGT(0);
+                }
+                expect(caught).toBeTrue();
+            });
+            it("executes the inline component with escaped Ruby interpolation", () => {
+                include template="/jruby-tests/Inline.bxm";
+                expect(variables.inlineResult.value).toBe(42);
+                expect(variables.inlineResult.stdout).toBe("Hello, BoxLang" & char(10));
+            });
+            it("loads a preinstalled gem without external JRuby", () => {
+                var ruby = jrubySession({ gemHome: expandPath("/jruby-tests/gems"), gemPaths: [expandPath("/jruby-tests/gems")] });
+                try { expect(ruby.eval("require 'bx_fixture'; BXFixture::VALUE").value).toBe(73); }
+                finally { ruby.close(); }
+            });
+            it("rejects handles from another live session", () => {
+                var first = jrubySession();
+                var second = jrubySession();
+                try {
+                    var handle = first.eval("Object.new").value;
+                    expect(() => second.eval("input", { input: handle })).toThrow();
+                } finally { first.close(); second.close(); }
+            });
+            it("closes sessions and rejects stale handles after module reload", () => {
+                var oldSession = jrubySession();
+                var handle = oldSession.eval("Object.new").value;
+                boxModuleReload("bxjruby");
+                expect(oldSession.isClosed()).toBeTrue();
+                var fresh = jrubySession();
+                try { expect(() => fresh.eval("input", { input: handle })).toThrow(); }
+                finally { fresh.close(); }
+                expect(jrubyEval("3 + 4").value).toBe(7);
+                include template="/jruby-tests/Inline.bxm";
+                expect(variables.inlineResult.value).toBe(42);
+            });
+        });
+    }
+}

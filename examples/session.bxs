@@ -1,0 +1,8 @@
+ruby = jrubySession({ workingDirectory: getDirectoryFromPath(getCurrentTemplatePath()) });
+try {
+    ruby.evalFile("greeter.rb");
+    greeter = ruby.eval("Greeter.new").value;
+    println(ruby.call(greeter, "greet", ["BoxLang"], { prefix: "Hi" }).value);
+} finally {
+    ruby.close();
+}
