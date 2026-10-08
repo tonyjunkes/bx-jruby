@@ -223,28 +223,13 @@ too. Its JSON report is `build/testbox/report.json`; require `totalFail == 0`,
 `totalError == 0`, and `totalPass > 0`. JUnit reports are in `build/reports/tests/`.
 
 CI verifies JUnit and packaged consumers on Java 21/Windows/Linux, plus TestBox
-against BoxLang 1.18.0, latest, and snapshot.
+against BoxLang latest, and snapshot.
 PR and main-branch release workflows share these checks; releases publish the
 verified distribution to ForgeBox and attach the ZIP and checksum to GitHub.
 
 The BoxLang descriptor is authored in `src/main/bx/ModuleConfig.bx` and copied to
 the ZIP root during packaging. BoxLang specs, consumer checks, and
 fixtures live in `src/test/bx`; Java unit tests live in `src/test/java`.
-
-## Releasing
-
-Keep the same SemVer version in `box.json`, `gradle.properties`, and
-`src/main/bx/ModuleConfig.bx`, and update `CHANGELOG.md` before releasing.
-The release workflow runs on pushes to `main` or manual dispatch from `main`
-after all shared checks pass. It requires the `FORGEBOX_API_TOKEN` repository
-secret and permission for `GITHUB_TOKEN` to create version tags and releases.
-
-Publication uses the tested ZIP's extracted package, including the compiled
-module and bundled JRuby JAR. The workflow creates an annotated version tag,
-publishes to ForgeBox, and attaches the ZIP and SHA-256 checksum to the GitHub
-release. A tag on another commit stops publication; increment the version for a
-new release commit. Retrying the same tagged commit can complete an interrupted
-publication. PR and verification jobs do not receive the ForgeBox token.
 
 The module uses MIT licensing. Bundled dependencies retain their own licenses;
 see [third-party notices](THIRD-PARTY-NOTICES.md).
