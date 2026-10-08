@@ -292,11 +292,12 @@ class RubySessionTest {
     }
 
     @Test
-    void optionsOverrideDefaultsWithoutMutatingThem() {
+    void optionsOverrideDefaultsWithoutMutatingThem() throws Exception {
         var defaults = Map.of("loadPaths", List.of("missing"));
         var configured = new RubyManager(getClass().getClassLoader(), defaults);
         try (configured; var ruby = configured.create(Map.of("loadPaths", List.of()), directory, true)) {
-            assertEquals(directory.toString().replace('\\', '/'), value(ruby, "Dir.pwd").toString().replace('\\', '/'));
+            // JRuby expands Windows short-path aliases (e.g. RUNNER~1); compare filesystem identity.
+            assertTrue(Files.isSameFile(directory, Path.of(value(ruby, "Dir.pwd").toString())));
             assertEquals(List.of("missing"), defaults.get("loadPaths"));
         }
         assertThrows(RuntimeException.class, () -> manager.create(Map.of("typo", true), directory, true));
