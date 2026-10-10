@@ -24,6 +24,12 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 21
 }
 
+tasks.named('javadoc') {
+    options.encoding = 'UTF-8'
+    options.memberLevel = org.gradle.external.javadoc.JavadocMemberLevel.PRIVATE
+    options.addBooleanOption('Xdoclint:all,-missing', true)
+}
+
 tasks.withType(AbstractArchiveTask).configureEach {
     preserveFileTimestamps = false
     reproducibleFileOrder = true
@@ -106,7 +112,7 @@ tasks.register('consumerTest', JavaExec) {
     systemProperty 'file.encoding', 'UTF-8'
 }
 
-tasks.named('check') { dependsOn consumerTest }
+tasks.named('check') { dependsOn consumerTest, javadoc }
 
 tasks.register('consumerOverrideTest', JavaExec) {
     dependsOn prepareConsumer

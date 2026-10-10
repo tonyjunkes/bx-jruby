@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- Make captured close reject new work before waiting for active execution; document the new core options and cleanup API in the agent skill.
+
+- Add immutable runtime-local `env` options with string validation and gem-setting conflict detection.
+- Add opt-in bounded `outputLimit` captures, preserving unlimited capture by default.
+- Add public request-independent session creation and pre-close callbacks for extensions such as bx-jruby-rack. Extensions must drain their work before returning from a callback.
+- Document Java methods and constructors with Javadoc, including conversion and runtime ownership contracts; validate Javadoc during normal builds.
+
 ## 1.0.0
 
 - Add isolated Ruby string/file evaluation and the `bx:jruby` component.

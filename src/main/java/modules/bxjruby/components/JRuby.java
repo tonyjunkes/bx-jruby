@@ -15,6 +15,9 @@ import ortus.boxlang.runtime.validation.Validator;
 /** Captures template body text as Ruby source and assigns its result. */
 @BoxComponent(allowsBody = true, requiresBody = true)
 public final class JRuby extends Component {
+    /**
+     * Declares the result variable and optional bindings and runtime settings for inline Ruby.
+     */
     public JRuby() {
         declaredAttributes = new Attribute[] {
             new Attribute(Key.variable, "string", Set.of(Validator.REQUIRED, Validator.NON_EMPTY)),
@@ -23,6 +26,16 @@ public final class JRuby extends Component {
         };
     }
 
+    /**
+     * Captures the template body as Ruby, evaluates it and assigns the result variable. Template early exits
+     * propagate without Ruby evaluation.
+     *
+     * @param context the calling BoxLang context used for path resolution
+     * @param attributes the validated component attributes
+     * @param body the template body to capture as Ruby source
+     * @param executionState the component execution state supplied by BoxLang
+     * @return the early-exit result or normal component return marker
+     */
     @Override
     public BodyResult _invoke(IBoxContext context, IStruct attributes, ComponentBody body, IStruct executionState) {
         StringBuffer source = new StringBuffer();

@@ -6,7 +6,7 @@ class {
     this.title = "bx-jruby";
     this.author = "Tony Junkes";
     this.description = "JRuby support in BoxLang.";
-    this.version = "1.0.0";
+    this.version = "1.1.0";
     this.mapping = "bxjruby";
 
     function configure() {
@@ -15,7 +15,9 @@ class {
             workingDirectory: "",
             loadPaths: [],
             gemHome: "",
-            gemPaths: []
+            gemPaths: [],
+            env: {},
+            outputLimit: 0
         };
     }
 

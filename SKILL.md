@@ -98,6 +98,7 @@ Session methods are Java methods; pass their arguments positionally.
 | `get(name)` | Converted local value; null for absent/nil. |
 | `call(receiver, method, args=[], kwargs={})` | `{ value, stdout, stderr }`; null receiver calls a top-level Ruby method. |
 | `close()` | Idempotently closes the runtime; returns void. |
+| `closeAndCapture()` | Closes with a fresh `{ stdout, stderr }` capture of exit handlers; rejects new work while waiting for active work. |
 
 ```js
 ruby = jrubySession();
@@ -217,6 +218,21 @@ The same options can be module defaults in `boxlang.json` under
 defaults; path lists are not merged. Relative working directories resolve from
 the caller directory; other paths resolve from the selected working directory.
 Additional load paths preserve JRuby's bundled standard-library paths.
+
+Core 1.1.0 also accepts `env` and `outputLimit`:
+
+```js
+result = jrubyEval("puts ENV.fetch('APP_MODE'); 42", {}, {
+    env: { APP_MODE: "batch" }, outputLimit: 65536
+});
+```
+
+`env` is a string map applied over the process environment within this runtime.
+Explicit `env` replaces the module's default overlay. `GEM_HOME` and `GEM_PATH`
+must agree with separately configured gem options. `outputLimit` bounds retained
+characters per stream per operation; zero preserves unlimited capture. Truncated
+output includes a marker. For a session's final exit-handler output, call
+`closeAndCapture()` instead of `close()`; repeated calls return the final capture.
 
 ## Common Pitfalls
 

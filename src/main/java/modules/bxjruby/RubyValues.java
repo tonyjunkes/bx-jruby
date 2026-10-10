@@ -24,10 +24,33 @@ import ortus.boxlang.runtime.types.exceptions.BoxRuntimeException;
 
 /** Copies collection boundaries; Ruby objects never escape without ownership. */
 final class RubyValues {
+    /**
+     * Copies supported Ruby scalars and collections into BoxLang values. Other values become session handles
+     * only when permitted; cycles and key collisions are rejected.
+     *
+     * @param value the value to convert or write
+     * @param owner the session that owns opaque Ruby values
+     * @param handles whether unsupported Ruby results may become owned handles
+     * @return the converted value or opaque session handle
+     * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if conversion finds cycles, invalid
+     * keys, collisions or disallowed handles
+     */
     static Object fromRuby(Object value, RubySession owner, boolean handles) {
         return fromRuby(value, owner, handles, new IdentityHashMap<>());
     }
 
+    /**
+     * Copies supported Ruby scalars and collections into BoxLang values. Other values become session handles
+     * only when permitted; cycles and key collisions are rejected.
+     *
+     * @param value the value to convert or write
+     * @param owner the session that owns opaque Ruby values
+     * @param handles whether unsupported Ruby results may become owned handles
+     * @param active the identity map of collections in the current recursion path
+     * @return the converted value or opaque session handle
+     * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if conversion finds cycles, invalid
+     * keys, collisions or disallowed handles
+     */
     private static Object fromRuby(Object value, RubySession owner, boolean handles, IdentityHashMap<Object, Boolean> active) {
         if (value == null || value instanceof RubyNil) return null;
         if (value instanceof RubyString string) return string.asJavaString();
@@ -73,10 +96,33 @@ final class RubyValues {
         return value;
     }
 
+    /**
+     * Copies BoxLang collections into Ruby collections and unwraps handles only in their owning session.
+     * Other Java values become JRuby proxies.
+     *
+     * @param value the value to convert or write
+     * @param owner the session that owns opaque Ruby values
+     * @param runtime the destination JRuby runtime owned by the session
+     * @return the converted Ruby value
+     * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if conversion finds cycles, invalid
+     * keys or foreign handles
+     */
     static IRubyObject toRuby(Object value, RubySession owner, Ruby runtime) {
         return toRuby(value, owner, runtime, new IdentityHashMap<>());
     }
 
+    /**
+     * Copies BoxLang collections into Ruby collections and unwraps handles only in their owning session.
+     * Other Java values become JRuby proxies.
+     *
+     * @param value the value to convert or write
+     * @param owner the session that owns opaque Ruby values
+     * @param runtime the destination JRuby runtime owned by the session
+     * @param active the identity map of collections in the current recursion path
+     * @return the converted Ruby value
+     * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if conversion finds cycles, invalid
+     * keys or foreign handles
+     */
     private static IRubyObject toRuby(Object value, RubySession owner, Ruby runtime, IdentityHashMap<Object, Boolean> active) {
         if (value instanceof RubyObject handle) return owner.unwrap(handle);
         // A reload creates a new module classloader, so old handles fail instanceof.
@@ -122,6 +168,14 @@ final class RubyValues {
         return JavaEmbedUtils.javaToRuby(runtime, value);
     }
 
+    /**
+     * Marks a collection in the current recursion path and rejects cycles.
+     *
+     * @param value the collection about to be traversed
+     * @param active the identity map of collections in the current recursion path
+     * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if the collection is already in the
+     * recursion path
+     */
     private static void enter(Object value, IdentityHashMap<Object, Boolean> active) {
         if (active.put(value, true) != null) throw new BoxRuntimeException("Cyclic collections cannot be converted between Ruby and BoxLang");
     }

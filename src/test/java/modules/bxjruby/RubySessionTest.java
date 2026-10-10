@@ -21,19 +21,90 @@ class RubySessionTest {
 
     RubyManager manager = new RubyManager(getClass().getClassLoader(), Map.of());
 
+    /**
+     * Creates and tracks a default session for automatic test cleanup.
+     *
+     * @return a fresh reusable test session
+     */
     RubySession session() {
         return manager.create(Map.of(), directory, true);
     }
 
+    /**
+     * Evaluates source and extracts the converted result value.
+     *
+     * @param session the session to evaluate in
+     * @param source the Ruby source to evaluate
+     * @return the evaluation's value
+     */
     Object value(RubySession session, String source) {
         return session.eval(source).get("value");
     }
 
+    /**
+     * Closes every session created by the completed test.
+     */
     @AfterEach
     void cleanup() {
         manager.close();
     }
 
+    /**
+     * Verifies isolated environment overlays and replacement of default maps by explicit options.
+     */
+    @Test
+    void environmentIsLocalAndExplicitMapsReplaceDefaults() {
+        try (var configured = new RubyManager(getClass().getClassLoader(), Map.of("env", Map.of("BX_DEFAULT", "default")));
+             var first = configured.create(Map.of("env", Map.of("BX_ISOLATED", "one")), directory, true);
+             var second = configured.create(Map.of("env", Map.of("BX_ISOLATED", "two")), directory, true)) {
+            assertEquals("one", value(first, "ENV['BX_ISOLATED']"));
+            assertEquals("two", value(second, "ENV['BX_ISOLATED']"));
+            assertNull(value(first, "ENV['BX_DEFAULT']"));
+            value(first, "ENV['BX_ISOLATED'] = 'changed'");
+            assertEquals("two", value(second, "ENV['BX_ISOLATED']"));
+            assertNull(System.getenv("BX_ISOLATED"));
+        }
+        assertThrows(RuntimeException.class, () -> manager.create(Map.of("env", Map.of("BAD", 3)), directory, true));
+        assertThrows(RuntimeException.class, () -> manager.create(Map.of("env", Map.of("A=B", "bad")), directory, true));
+        assertThrows(RuntimeException.class, () -> manager.create(Map.of("gemHome", ".", "env", Map.of("GEM_HOME", "other")), directory, true));
+    }
+
+    /**
+     * Verifies capture truncation and that extension shutdown hooks run before ordinary session cleanup.
+     */
+    @Test
+    void boundedOutputAndShutdownHookPreserveOwnership() {
+        var ruby = manager.create(Map.of("outputLimit", 32), directory, true);
+        assertEquals("x".repeat(32) + "\n[JRuby output truncated]\n", ruby.eval("print 'x' * 100_000").get("stdout"));
+        assertEquals("ok\n", ruby.eval("puts 'ok'").get("stdout"));
+        var called = new java.util.concurrent.atomic.AtomicBoolean();
+        manager.beforeClose(() -> {
+            assertFalse(ruby.isClosed());
+            ruby.close();
+            called.set(true);
+        });
+        manager.close();
+        assertTrue(called.get());
+        assertEquals(0, manager.getSessionCount());
+    }
+
+    /**
+     * Verifies that extension close reports a fresh, idempotent capture of exit-handler output.
+     */
+    @Test
+    void extensionCloseCapturesExitHandlersSeparately() {
+        var ruby = manager.create(Map.of("outputLimit", 32), directory, true);
+        ruby.eval("puts 'operation'; at_exit { puts 'closed'; warn 'cleanup' }");
+        var result = ruby.closeAndCapture();
+        assertEquals("closed\n", result.get("stdout"));
+        assertEquals("cleanup\n", result.get("stderr"));
+        assertTrue(ruby.isClosed());
+        assertEquals(result, ruby.closeAndCapture());
+    }
+
+    /**
+     * Verifies captured streams and independent conversion of Ruby scalar and collection results.
+     */
     @Test
     void capturesOutputAndReturnsIndependentNativeValues() {
         try (var ruby = session()) {
@@ -52,6 +123,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies collection bindings are copied while Ruby locals persist between evaluations.
+     */
     @Test
     void copiesBindingsAndPersistsLocals() {
         try (var ruby = session()) {
@@ -65,6 +139,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies decimal conversion preserves precision in both directions.
+     */
     @Test
     void decimalBindingsAndResultsRetainPrecision() {
         try (var ruby = session()) {
@@ -73,6 +150,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies Ruby NaN and infinities convert to corresponding numeric Java values.
+     */
     @Test
     void nonFiniteDecimalsRemainNumericInsteadOfBecomingZero() {
         try (var ruby = session()) {
@@ -83,6 +163,11 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies independent sessions do not share Ruby globals, constants or loaded libraries.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void sessionsIsolateGlobalsConstantsAndRequiredLibraries() throws Exception {
         Files.writeString(directory.resolve("library.rb"), "LIBRARY_VALUE = 9\n");
@@ -94,6 +179,11 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies embedded standard libraries and configured additional Ruby load paths.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void standardLibraryAndConfiguredLoadPathsWork() throws Exception {
         Files.writeString(directory.resolve("helper.rb"), "def helper; 23; end");
@@ -102,6 +192,11 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies file evaluation retains relative require behavior and original source filenames.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void evalFilePreservesRelativeRequireAndFilename() throws Exception {
         Files.createDirectories(directory.resolve("nested"));
@@ -117,6 +212,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies failures expose captured output, source details and the original Ruby cause.
+     */
     @Test
     void capturesFailureOutputAndOriginalCause() {
         try (var ruby = session()) {
@@ -132,6 +230,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies owned object handles support method calls, keywords and reuse in bindings.
+     */
     @Test
     void handlesSupportCallsKeywordsAndInputBindings() {
         try (var ruby = session(); var other = session()) {
@@ -148,6 +249,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies one-shot sessions reject opaque handle results and still terminate their runtime.
+     */
     @Test
     void oneShotRejectsNestedObjectHandlesAndAlwaysTerminates() {
         var ruby = manager.create(Map.of(), directory, false);
@@ -158,6 +262,9 @@ class RubySessionTest {
         assertEquals(0, manager.getSessionCount());
     }
 
+    /**
+     * Verifies cycles, invalid hash keys and handle ownership errors are rejected.
+     */
     @Test
     void rejectsLossyAndCyclicConversions() {
         try (var ruby = session()) {
@@ -170,6 +277,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies key conversion collisions fail without partially replacing existing locals.
+     */
     @Test
     void rejectsCollidingInputHashBindingsAndKeywordsWithoutUpdatingLocals() {
         try (var ruby = session()) {
@@ -188,6 +298,9 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies getters detach collections and close invalidates remaining owned handles.
+     */
     @Test
     void getDetachesCollectionsAndClearsLiveHandlesOnClose() {
         var ruby = session();
@@ -205,6 +318,11 @@ class RubySessionTest {
         assertThrows(RuntimeException.class, () -> ruby.get("state"));
     }
 
+    /**
+     * Verifies concurrent callers serialize operations without interleaving captures.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void concurrentCallsSerializeAndDoNotMixOutput() throws Exception {
         try (var ruby = session(); var workers = Executors.newFixedThreadPool(4)) {
@@ -222,6 +340,11 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies close waits for active Ruby while rejecting later operations.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void closeWaitsForWorkAndRejectsNewWork() throws Exception {
         var ruby = session();
@@ -242,6 +365,43 @@ class RubySessionTest {
         } finally { finish.countDown(); }
     }
 
+    /**
+     * Verifies captured close rejects new work before waiting and returns only exit-handler output.
+     *
+     * @throws Exception if fixture execution or cleanup fails
+     */
+    @Test
+    void capturedCloseRejectsNewWorkWhileWaiting() throws Exception {
+        var ruby = session();
+        CountDownLatch started = new CountDownLatch(1), finish = new CountDownLatch(1);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var running = workers.submit(() -> ruby.eval(
+                "at_exit { puts 'exit capture' }; started.countDown; finish.await; puts 'operation'; 42",
+                Map.of("started", started, "finish", finish)
+            ));
+            assertTrue(started.await(30, TimeUnit.SECONDS));
+            var closing = workers.submit(ruby::closeAndCapture);
+            try {
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!ruby.isClosed() && System.nanoTime() < deadline) Thread.onSpinWait();
+                assertTrue(ruby.isClosed());
+                assertFalse(closing.isDone());
+            } finally {
+                finish.countDown();
+            }
+            assertEquals("operation\n", running.get(30, TimeUnit.SECONDS).get("stdout"));
+            assertEquals("exit capture\n", closing.get(30, TimeUnit.SECONDS).get("stdout"));
+            assertEquals("exit capture\n", ruby.closeAndCapture().get("stdout"));
+            assertThrows(RuntimeException.class, () -> ruby.eval("1"));
+        } finally {
+            finish.countDown();
+            ruby.close();
+        }
+    }
+
+    /**
+     * Verifies manager shutdown releases both initialized and unused sessions.
+     */
     @Test
     void managerClosesInitializedAndLazySessions() {
         var first = session(); var lazy = session();
@@ -252,6 +412,9 @@ class RubySessionTest {
         assertThrows(RuntimeException.class, () -> session());
     }
 
+    /**
+     * Verifies a failing exit handler does not prevent other sessions from closing.
+     */
     @Test
     void managerContinuesCleanupAfterExitHandlerFailure() {
         var failing = session();
@@ -267,6 +430,9 @@ class RubySessionTest {
         assertTrue(captured.get("stderr").toString().contains("close failure"));
     }
 
+    /**
+     * Verifies evaluation restores the caller's context loader on success and failure.
+     */
     @Test
     void preservesThreadContextClassLoaderOnSuccessAndFailure() {
         var original = Thread.currentThread().getContextClassLoader();
@@ -278,6 +444,11 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies a session can require a gem from its configured preinstalled gem directory.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void configuredPreinstalledGemWorks() throws Exception {
         Path gems = directory.resolve("gems");
@@ -291,6 +462,11 @@ class RubySessionTest {
         }
     }
 
+    /**
+     * Verifies resolved call options replace defaults without mutating the caller's maps.
+     *
+     * @throws Exception if fixture setup, execution or cleanup fails
+     */
     @Test
     void optionsOverrideDefaultsWithoutMutatingThem() throws Exception {
         var defaults = Map.of("loadPaths", List.of("missing"));

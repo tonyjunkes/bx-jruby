@@ -88,6 +88,7 @@ Session methods are Java methods; use positional arguments:
 | `get(name)` | Converted local value; null if absent or nil |
 | `call(receiver, method, args=[], kwargs={})` | `{ value, stdout, stderr }` |
 | `close()` | void; idempotently terminates the runtime |
+| `closeAndCapture()` | `{ stdout, stderr }` containing a fresh capture of exit-handler output; closes the session |
 | `isClosed()` | Whether closing has begun |
 
 Use a null receiver for a top-level Ruby method:
@@ -163,8 +164,13 @@ in `boxlang.json` under `modules["bxjruby"].settings`:
 | `loadPaths` | `[]` | Additional paths for Ruby `require` |
 | `gemHome` | Inherited JRuby/environment behavior | Sets runtime `GEM_HOME` |
 | `gemPaths` | `[]` | Sets runtime `GEM_PATH` when nonempty |
+| `env` | `{}` | Runtime-local string environment map, overlaid on inherited environment before initialization |
+| `outputLimit` | `0` | Maximum captured characters per stream per operation; zero is unlimited; truncated captures include a marker |
 
 An explicit option replaces that module default; path lists are not merged.
+An explicit `env` map also replaces the default map. Keys are case-sensitive;
+values must be strings. Conflicting `GEM_HOME`/`GEM_PATH` sources are rejected.
+Environment changes stay inside the JRuby runtime and do not modify the host process.
 An empty `workingDirectory` selects the caller directory; an empty `gemHome`
 or `gemPaths` uses inherited environment behavior. Relative working directories
 resolve from the BoxLang caller directory; other paths resolve from the chosen
@@ -210,8 +216,12 @@ The build produces an installable ZIP and SHA-256 checksum under
 install it with CommandBox:
 
 ```sh
-box install /path/to/bx-jruby/build/distributions/bx-jruby-1.0.0.zip
+box install /path/to/bx-jruby/build/distributions/bx-jruby-1.1.0.zip
 ```
+
+Java documentation is generated under `build/docs/javadoc/` with
+`./gradlew javadoc`. Normal builds also validate Javadoc for public and internal
+methods.
 
 Build output `build/module/` is also a complete module that can be placed in a
 configured module directory. Installing the source checkout alone does not
@@ -226,6 +236,15 @@ CI verifies JUnit and packaged consumers on Java 21/Windows/Linux, plus TestBox
 against BoxLang latest, and snapshot.
 PR and main-branch release workflows share these checks; releases publish the
 verified distribution to ForgeBox and attach the ZIP and checksum to GitHub.
+
+Extensions can resolve `modules.bxjruby.JRubyRuntime` through the active module's
+public class loader. Extension API version 1 exposes `session(Path, Map)` for
+request-independent, core-owned sessions and `beforeClose(Runnable)` for draining
+dependent resources before core session teardown. The returned `AutoCloseable`
+unregisters a callback. Callbacks run without the manager lock and must wait for
+their owned work to finish. Extensions using thread-affine workers must create,
+operate, and close each session on its owning worker. The core does not forcibly
+cancel Ruby or supply web routing; bx-jruby-rack owns that integration.
 
 The BoxLang descriptor is authored in `src/main/bx/ModuleConfig.bx` and copied to
 the ZIP root during packaging. BoxLang specs, consumer checks, and

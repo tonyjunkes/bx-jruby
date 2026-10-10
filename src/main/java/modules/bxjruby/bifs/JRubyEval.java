@@ -12,6 +12,9 @@ import ortus.boxlang.runtime.types.Struct;
 /** Evaluate a Ruby source string with explicit bindings and captured output. */
 @BoxBIF
 public final class JRubyEval extends BIF {
+    /**
+     * Declares the source, bindings and runtime settings for jrubyEval.
+     */
     public JRubyEval() {
         declaredArguments = new Argument[] {
             new Argument(true, "string", Key.of("script")),
@@ -20,6 +23,13 @@ public final class JRubyEval extends BIF {
         };
     }
 
+    /**
+     * Evaluates Ruby source with explicit bindings in a one-shot session.
+     *
+     * @param context the calling BoxLang context used for path resolution
+     * @param arguments the validated BoxLang function arguments
+     * @return a struct containing the value, stdout and stderr
+     */
     @Override
     public Object _invoke(IBoxContext context, ArgumentsScope arguments) {
         return JRubyRuntime.evaluate(context, arguments.getAsString(Key.of("script")),
