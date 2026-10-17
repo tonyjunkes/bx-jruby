@@ -103,6 +103,10 @@ sessions run independently. Closing waits for current work and rejects new
 work. It does not forcibly cancel Ruby code. Module unload closes all remaining
 sessions; applications should still close their own sessions promptly.
 
+Session operations reject callback reentry before waiting for the session lock,
+including attempts from callback-spawned threads. Activation shutdown drains active
+callbacks before terminating their runtimes and invalidating owned handles.
+
 Custom Ruby values become opaque handles owned by the session. Pass handles to
 `call()` or through bindings in the same session. They become invalid after
 close or module reload and cannot cross sessions. One-shot calls reject results

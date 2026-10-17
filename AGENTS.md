@@ -25,7 +25,8 @@ Read `README.md` for public usage, `SKILL.md` when integrating the module, and
 - Preserve caller-relative paths when changing native wrappers. Resolve Java through the module activation's classloader.
 - Shared BIF instances may retain only activation-local metadata, never a calling request/context.
 - Handles are valid only in their owning live session and activation. Keep automatic conversion stable; new conversions are explicit.
-- Callback leases expire after synchronous invocation; reject late/cross-thread calls and same-session execution/close from callbacks.
+- Callback leases expire after synchronous invocation. Reject callback reentry at every executable session entry before acquiring its monitor, including cross-thread attempts.
+- Public close methods reject active callbacks. Manager-owned shutdown marks all sessions draining, waits for active work and defers reentrant termination until the outermost operation unwinds.
 - Module cleanup drains extensions before sessions and unregisters only owned descriptors, even after failure.
 
 ## Changes

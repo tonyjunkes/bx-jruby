@@ -6,6 +6,7 @@
 - Add copied stdin/ARGV, opt-in Bundler setup, explicit binary/symbol/date/time conversion and scalar handles.
 - Add operation-scoped BoxLang block callbacks through jrubyCall with reentry and lifetime checks.
 - Reject cross-thread close and captured-close attempts during callbacks before waiting on the session lock.
+- Reject all callback-spawned session operations before locking and drain active callback sessions during activation shutdown without abandoning owned handles.
 - Expand interop regression tests, examples, skills and contributor guidance.
 - Publish a concrete compiled GitHub ZIP location to ForgeBox after the release asset exists; validate the versioned location during builds.
 

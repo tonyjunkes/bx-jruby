@@ -255,6 +255,10 @@ thread and cannot execute in its owning session. close() and closeAndCapture()
 reject attempts from any thread while that session's callback is active; close
 after the callback returns. Retained/cross-thread Proc invocation fails. Always
 close the session in finally.
+All executable session methods reject callback reentry before locking, including
+callback-spawned workers. Activation shutdown uses manager-owned draining instead
+of public close: existing callbacks finish, new work is rejected, and termination
+invalidates handles. Reentrant manager termination waits for the outermost operation.
 
 Source contributors should read
 [AGENTS.md](AGENTS.md) for build and language ownership rules.

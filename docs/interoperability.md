@@ -78,11 +78,20 @@ Yield arguments and callback results use normal conversion. The callback runs on
 the invoking thread and expires when the Ruby call returns or fails. Ruby may retain
 the Proc, but invoking it later or from another thread fails before entering BoxLang.
 The lease releases the closure/context on expiry. Same-session execution or close
-from its callback is rejected; use the yielded native values. Both close() and
+from its callback is rejected; use the yielded native values. Every executable
+session entry checks callback activity before taking the session monitor, including
+calls from callback-spawned threads. Both close() and
 closeAndCapture() reject attempts from any thread while the callback is active,
 before waiting for the session monitor. Close after the callback returns. Exceptions retain
 their original cause and Ruby stdout/stderr capture. Callback BoxLang output uses
 BoxLang's normal output facilities rather than Ruby's captured streams.
+
+Manager-owned activation shutdown has a separate drain path. After extension hooks
+finish, all sessions reject new work before shutdown waits for active operations.
+An active callback can finish returning an owned value; termination and handle
+invalidation follow that operation. Reentrant manager shutdown defers its session's
+termination until the outermost Ruby operation unwinds. Callback failures retain
+their original cause, and deferred cleanup failures are suppressed on that failure.
 
 ## Bundler-aware execution
 

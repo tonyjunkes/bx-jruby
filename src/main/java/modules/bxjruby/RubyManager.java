@@ -80,7 +80,8 @@ public final class RubyManager implements AutoCloseable {
 
     /**
      * Idempotently stops session creation, runs extension hooks and closes remaining sessions. All cleanup is
-     * attempted and later failures are suppressed on the first failure.
+     * attempted and later failures are suppressed on the first failure. Sessions drain active operations;
+     * a shutdown requested by the owning operation defers its termination until that operation unwinds.
      */
     @Override
     public void close() {
@@ -103,8 +104,9 @@ public final class RubyManager implements AutoCloseable {
         synchronized (this) {
             outstanding = Set.copyOf(sessions);
         }
+        outstanding.forEach(RubySession::beginDrain);
         for (var session : outstanding) {
-            try { session.close(); }
+            try { session.drain(); }
             catch (RuntimeException error) {
                 if (failure == null) failure = error;
                 else failure.addSuppressed(error);

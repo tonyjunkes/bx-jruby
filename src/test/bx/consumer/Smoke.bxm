@@ -64,7 +64,34 @@ try {
 }
 stale = jrubySession();
 staleHandle = stale.eval("Object.new").value;
-boxModuleReload("bxjruby");
+callbackEntered = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+callbackRelease = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+callbackExits = createObject("java", "java.util.concurrent.atomic.AtomicInteger").init();
+stale.eval("at_exit { exits.incrementAndGet }; def bx_reload_callback; yield; end; nil", {exits: callbackExits});
+activeCallback = runAsync(function() {
+    return jrubyCall(session=stale, method="bx_reload_callback", block=function() {
+        callbackEntered.countDown();
+        check(callbackRelease.await(10, createObject("java", "java.util.concurrent.TimeUnit").SECONDS), "Callback release timeout");
+        return 42;
+    });
+});
+try {
+    check(callbackEntered.await(10, createObject("java", "java.util.concurrent.TimeUnit").SECONDS), "Callback did not start");
+    activeReload = runAsync(function() {
+        boxModuleReload("bxjruby");
+    });
+    startedWaiting = getTickCount();
+    while (!stale.isClosed() && getTickCount() - startedWaiting < 5000) {
+        sleep(10);
+    }
+    check(stale.isClosed(), "Reload did not begin draining the callback session");
+    check(!activeReload.isDone(), "Reload must wait for the callback");
+} finally {
+    callbackRelease.countDown();
+}
+check(activeCallback.get(20000).value == 42, "Reload interrupted the active callback");
+activeReload.get(20000);
+check(callbackExits.get() == 1, "Reload must terminate the callback runtime exactly once");
 check(stale.isClosed(), "Reload did not close session");
 check(jrubyEval("2 + 3").value == 5, "Function after reload");
 fresh = jrubySession();
