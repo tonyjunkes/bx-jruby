@@ -51,6 +51,10 @@ tasks.register('verifyModuleMetadata') {
             throw new GradleException('box.json, gradle.properties, and ModuleConfig.bx versions must match')
         if (manifest.slug != 'bx-jruby' || manifest.boxlang?.moduleName != 'bxjruby')
             throw new GradleException('The package slug must be bx-jruby and runtime moduleName must be bxjruby')
+        def expectedLocation = "https://github.com/tonyjunkes/bx-jruby/releases/download/${releaseVersion}/bx-jruby-${releaseVersion}.zip"
+        if (manifest.location != expectedLocation) {
+            throw new GradleException('ForgeBox location must point to this version of the compiled GitHub release ZIP')
+        }
     }
 }
 
@@ -60,7 +64,9 @@ tasks.register('createModuleStructure', Sync) {
     from(tasks.jar) { into 'libs' }
     from(configurations.runtimeClasspath) { into 'libs' }
     from('src/main/bx')
-    from('.') { include 'box.json', 'README.md', 'SKILL.md', 'CHANGELOG.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md' }
+    from('docs') { into 'docs' }
+    from('examples') { into 'examples' }
+    from('.') { include 'box.json', 'README.md', 'SKILL.md', 'CHANGELOG.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'AGENTS.md' }
 }
 
 tasks.register('moduleZip', Zip) {
@@ -125,6 +131,39 @@ tasks.register('consumerOverrideTest', JavaExec) {
 }
 
 tasks.named('check') { dependsOn consumerOverrideTest }
+
+tasks.register('exampleTest', JavaExec) {
+    dependsOn prepareConsumer
+    classpath = configurations.testRuntimeClasspath.filter { it.name.startsWith('boxlang-') }
+    mainClass = 'ortus.boxlang.runtime.BoxRunner'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    args '--bx-home', layout.buildDirectory.dir('example/home').get().asFile.absolutePath,
+        '--bx-config', file('src/test/bx/consumer/boxlang.json').absolutePath,
+        file('examples/interop.bxs').absolutePath
+}
+
+tasks.named('check') {
+    dependsOn exampleTest
+}
+
+// Explicit local observations; benchmarkModuleRoot can select an extracted released package.
+tasks.register('benchmark', JavaExec) {
+    dependsOn prepareConsumer
+    classpath = configurations.testRuntimeClasspath.filter { it.name.startsWith('boxlang-') }
+    mainClass = 'ortus.boxlang.runtime.BoxRunner'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    def config = layout.buildDirectory.file('benchmark/boxlang.json')
+    args '--bx-home', layout.buildDirectory.dir('benchmark/home').get().asFile.absolutePath,
+        '--bx-config', config.get().asFile.absolutePath, file('src/test/bx/consumer/Benchmark.bxs').absolutePath
+    systemProperty 'bxjruby.benchmarkOutput', file(providers.gradleProperty('benchmarkOutput').getOrElse('build/bif-benchmark.json')).absolutePath
+    doFirst {
+        def moduleRoot = file(providers.gradleProperty('benchmarkModuleRoot').getOrElse('build/consumer/modules')).absolutePath
+        config.get().asFile.parentFile.mkdirs()
+        config.get().asFile.setText(groovy.json.JsonOutput.toJson([modulesDirectory: [moduleRoot]]), 'UTF-8')
+    }
+}
 
 tasks.register('testBox', JavaExec) {
     dependsOn prepareConsumer

@@ -29,25 +29,16 @@ public final class JRubyRuntime {
     }
 
     /**
-     * Closes the active manager and removes only descriptors owned by the named module, even when cleanup
-     * fails.
+     * Closes the active manager. ModuleConfig performs ownership-aware descriptor cleanup in its finally block.
      *
-     * @param runtime the active BoxLang runtime
-     * @param moduleName the runtime module name whose descriptors may be removed
+     * @param runtime the active runtime (retained for compatibility with existing lifecycle callers)
+     * @param moduleName the module name (retained for compatibility with existing lifecycle callers)
      */
     public static void stop(BoxRuntime runtime, String moduleName) {
         RubyManager active = manager;
         manager = null;
-        try { if (active != null) active.close(); }
-        finally {
-            var functions = runtime.getFunctionService();
-            for (String name : java.util.List.of("jrubyEval", "jrubyEvalFile", "jrubySession")) {
-                var function = functions.getGlobalFunction(name);
-                if (function != null && moduleName.equalsIgnoreCase(function.module)) functions.unregisterGlobalFunction(Key.of(name));
-            }
-            var service = runtime.getComponentService();
-            var descriptor = service.getComponent("jruby");
-            if (descriptor != null && moduleName.equalsIgnoreCase(descriptor.module)) service.unregisterComponent(Key.of("jruby"));
+        if (active != null) {
+            active.close();
         }
     }
 
@@ -59,7 +50,9 @@ public final class JRubyRuntime {
      */
     private static RubyManager active() {
         RubyManager current = manager;
-        if (current == null) throw new BoxRuntimeException("bx-jruby module is not active");
+        if (current == null) {
+            throw new BoxRuntimeException("bx-jruby module is not active");
+        }
         return current;
     }
 
@@ -103,7 +96,26 @@ public final class JRubyRuntime {
      *
      * @return extension API version 1
      */
-    public static int extensionVersion() { return 1; }
+    public static int extensionVersion() {
+        return 1;
+    }
+
+    /**
+     * Invokes a session method with an optional synchronous BoxLang block.
+     * @param context the caller context, retained only for this operation
+     * @param session the owning core session
+     * @param receiver the receiver or null for top-level methods
+     * @param method the Ruby method name
+     * @param args positional arguments
+     * @param kwargs keyword arguments
+     * @param block the BoxLang function or null
+     * @return the captured result envelope
+     */
+    public static IStruct call(IBoxContext context, RubySession session, Object receiver, String method,
+            java.util.List<?> args, Map<?, ?> kwargs, ortus.boxlang.runtime.types.Function block) {
+        return session.callWithBlock(receiver, method, args, kwargs,
+            block == null ? null : values -> context.invokeFunction(block, values));
+    }
 
     /**
      * Evaluates source or a file in a one-shot session and closes before returning. Successful captures

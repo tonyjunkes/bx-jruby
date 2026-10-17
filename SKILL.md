@@ -1,6 +1,6 @@
 ---
 name: bx-jruby
-description: "Use this skill when executing Ruby inside BoxLang with the bx-jruby module: jrubyEval(), jrubyEvalFile(), jrubySession(), the bx:jruby component, explicit bindings, captured results, session-owned Ruby objects, and JRuby load paths or installed gems."
+description: "Use this skill when executing Ruby inside BoxLang with the bx-jruby module: jrubyEval(), jrubyEvalFile(), jrubySession(), jrubyCall(), binary/temporal conversion, input/ARGV, Bundler, the bx:jruby component, explicit bindings, captured results, session-owned Ruby objects, and JRuby load paths or installed gems."
 ---
 
 # bx-jruby: Execute Ruby in BoxLang
@@ -240,4 +240,25 @@ output includes a marker. For a session's final exit-handler output, call
 - Keep positional Ruby hashes in `args`; pass Ruby keywords through the separate `kwargs` struct.
 - Preserve hash key case when reading converted results; Ruby `"Name"` and `"name"` remain distinct.
 - Execute trusted code only: JRuby has the host process's Java, file, and network permissions.
-- Use JRuby-compatible pure Ruby or Java-platform gems. MRI C extensions are unsupported; this module does not install gems or manage Bundler.
+- Use JRuby-compatible pure Ruby or Java-platform gems. MRI C extensions are unsupported. Install gems explicitly; opt-in Bundler setup selects the installed bundle.
+
+## Interoperability additions (1.2.0)
+
+Read [docs/interoperability.md](docs/interoperability.md) when using binary data,
+temporal values, stdin/argv, Bundler or Ruby blocks. Use a reusable session for
+owned values; evalHandle(script, {}) retains scalar types, toRuby(value, type)
+creates an explicit Ruby value, and toBoxLang(handle, type) copies it back.
+
+Use jrubyCall(session, receiver, method, args=[], kwargs={}, block=null) for named
+arguments or synchronous BoxLang closures. The closure must finish on the invoking
+thread and cannot execute in its owning session. close() and closeAndCapture()
+reject attempts from any thread while that session's callback is active; close
+after the callback returns. Retained/cross-thread Proc invocation fails. Always
+close the session in finally.
+All executable session methods reject callback reentry before locking, including
+callback-spawned workers. Activation shutdown uses manager-owned draining instead
+of public close: existing callbacks finish, new work is rejected, and termination
+invalidates handles. Reentrant manager termination waits for the outermost operation.
+
+Source contributors should read
+[AGENTS.md](AGENTS.md) for build and language ownership rules.

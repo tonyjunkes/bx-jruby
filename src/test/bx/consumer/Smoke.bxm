@@ -14,6 +14,7 @@ check(result.value == 60, "Bindings and value conversion");
 check(result.stdout == "héllo 🦊" & char(10), "Unicode stdout capture");
 check(result.stderr == "warning" & char(10), "Stderr capture");
 check(jrubyEvalFile("/ruby-fixtures/main.rb", { amount: 1 }).value == 42, "Mapped file and require_relative");
+check(jrubyEvalFile("../resources/ruby/main.rb", {amount: 1}).value == 42, "Native BIF caller-relative file");
 check(jrubyEval("require 'json'; JSON.generate({answer: 42})").value == '{"answer":42}', "Bundled standard library");
 check(jrubyEval("defined?(FIXTURE_VALUE)").value == null, "One-shot isolation");
 exitOutput = jrubyEval("at_exit { puts 'finished' }; 1");
@@ -40,13 +41,57 @@ catch (any error) {
 }
 check(failureCaught, "Catchable Ruby errors");
 </bx:script>
+<bx:include template="/jruby-tests/EarlyExit.bxm">
 <bx:include template="/jruby-tests/Inline.bxm">
 <bx:script>
 check(variables.inlineResult.value == 42, "Inline tag value");
+check(!structKeyExists(variables, "shouldNotExist"), "Native component early exit");
 check(variables.inlineResult.stdout == "Hello, BoxLang" & char(10), "Inline Ruby interpolation");
+// Native BIF argument defaults and synchronous block context.
+check(jrubyEval(script="1 + 1").value == 2, "Native named arguments");
+interop = jrubySession({stdin: "input", argv: ["one", "two"]});
+try {
+    check(interop.eval("[STDIN.read, ARGV]").value[1] == "input", "Input options");
+    interop.eval("def bx_yield(value, scale:); yield(value * scale); end; nil");
+    blockResult = jrubyCall(session=interop, receiver=null, method="bx_yield", args=[3], kwargs={scale: 2}, block=function(value) {
+        return value + 1;
+    });
+    check(blockResult.value == 7, "Native Ruby block callback");
+    interop.eval("def bx_top; 9; end; nil");
+    check(jrubyCall(session=interop, method="bx_top").value == 9, "Optional receiver and block defaults");
+} finally {
+    interop.close();
+}
 stale = jrubySession();
 staleHandle = stale.eval("Object.new").value;
-boxModuleReload("bxjruby");
+callbackEntered = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+callbackRelease = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+callbackExits = createObject("java", "java.util.concurrent.atomic.AtomicInteger").init();
+stale.eval("at_exit { exits.incrementAndGet }; def bx_reload_callback; yield; end; nil", {exits: callbackExits});
+activeCallback = runAsync(function() {
+    return jrubyCall(session=stale, method="bx_reload_callback", block=function() {
+        callbackEntered.countDown();
+        check(callbackRelease.await(10, createObject("java", "java.util.concurrent.TimeUnit").SECONDS), "Callback release timeout");
+        return 42;
+    });
+});
+try {
+    check(callbackEntered.await(10, createObject("java", "java.util.concurrent.TimeUnit").SECONDS), "Callback did not start");
+    activeReload = runAsync(function() {
+        boxModuleReload("bxjruby");
+    });
+    startedWaiting = getTickCount();
+    while (!stale.isClosed() && getTickCount() - startedWaiting < 5000) {
+        sleep(10);
+    }
+    check(stale.isClosed(), "Reload did not begin draining the callback session");
+    check(!activeReload.isDone(), "Reload must wait for the callback");
+} finally {
+    callbackRelease.countDown();
+}
+check(activeCallback.get(20000).value == 42, "Reload interrupted the active callback");
+activeReload.get(20000);
+check(callbackExits.get() == 1, "Reload must terminate the callback runtime exactly once");
 check(stale.isClosed(), "Reload did not close session");
 check(jrubyEval("2 + 3").value == 5, "Function after reload");
 fresh = jrubySession();
@@ -63,7 +108,7 @@ unloadSession = jrubySession();
 moduleService = getBoxRuntime().getModuleService();
 moduleService.unload(Key::of("bxjruby"), false);
 check(unloadSession.isClosed(), "Unload did not close session");
-for (functionName in ["jrubyEval", "jrubyEvalFile", "jrubySession"]) {
+for (functionName in ["jrubyEval", "jrubyEvalFile", "jrubySession", "jrubyCall"]) {
     check(!getBoxRuntime().getFunctionService().hasGlobalFunction(functionName), "Unload left BIF registered: " & functionName);
 }
 check(!getBoxRuntime().getComponentService().hasComponent("jruby"), "Unload left component registered");

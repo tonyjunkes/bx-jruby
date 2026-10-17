@@ -36,7 +36,9 @@ public final class RubyManager implements AutoCloseable {
      * are invalid
      */
     public synchronized RubySession create(Map<?, ?> options, Path base, boolean handles) {
-        if (closed) throw new BoxRuntimeException("JRuby module is closed");
+        if (closed) {
+            throw new BoxRuntimeException("JRuby module is closed");
+        }
         var session = new RubySession(this, loader, RubyOptions.resolve(defaults, options, base), handles);
         sessions.add(session);
         return session;
@@ -69,14 +71,17 @@ public final class RubyManager implements AutoCloseable {
      * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if shutdown has begun
      */
     public synchronized AutoCloseable beforeClose(Runnable hook) {
-        if (closed) throw new BoxRuntimeException("JRuby module is closed");
+        if (closed) {
+            throw new BoxRuntimeException("JRuby module is closed");
+        }
         closeHooks.add(java.util.Objects.requireNonNull(hook));
         return () -> { synchronized (RubyManager.this) { closeHooks.remove(hook); } };
     }
 
     /**
      * Idempotently stops session creation, runs extension hooks and closes remaining sessions. All cleanup is
-     * attempted and later failures are suppressed on the first failure.
+     * attempted and later failures are suppressed on the first failure. Sessions drain active operations;
+     * a shutdown requested by the owning operation defers its termination until that operation unwinds.
      */
     @Override
     public void close() {
@@ -96,14 +101,19 @@ public final class RubyManager implements AutoCloseable {
                 else failure.addSuppressed(error);
             }
         }
-        synchronized (this) { outstanding = Set.copyOf(sessions); }
+        synchronized (this) {
+            outstanding = Set.copyOf(sessions);
+        }
+        outstanding.forEach(RubySession::beginDrain);
         for (var session : outstanding) {
-            try { session.close(); }
+            try { session.drain(); }
             catch (RuntimeException error) {
                 if (failure == null) failure = error;
                 else failure.addSuppressed(error);
             }
         }
-        if (failure != null) throw failure;
+        if (failure != null) {
+            throw failure;
+        }
     }
 }

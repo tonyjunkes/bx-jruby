@@ -1,0 +1,6 @@
+<bx:loop from="1" to="1" index="i">
+<bx:jruby variable="shouldNotExist">
+raise 'the Ruby body must not execute after template break'
+<bx:break>
+</bx:jruby>
+</bx:loop>
