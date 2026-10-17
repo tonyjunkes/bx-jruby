@@ -31,7 +31,7 @@ public final class RubySession implements AutoCloseable {
     private RubyOutput stderr;
     private volatile boolean closing;
     private boolean closed;
-    private boolean inCallback;
+    private volatile boolean inCallback;
 
     /**
      * Creates a lazy owned session with immutable options and per-operation output capture.
@@ -455,6 +455,7 @@ public final class RubySession implements AutoCloseable {
      * without rerunning handlers.
      *
      * @return a struct containing exit-handler stdout and stderr
+     * @throws BoxRuntimeException if a block callback is active, including on another thread
      */
     public IStruct closeAndCapture() {
         rejectCallbackClose();
@@ -478,6 +479,7 @@ public final class RubySession implements AutoCloseable {
      * Manager ownership is released even on failure; active Ruby is not forcibly cancelled.
      *
      * @throws RubyExecutionException if termination fails after cleanup is attempted
+     * @throws BoxRuntimeException if a block callback is active, including on another thread
      */
     @Override
     public void close() {
@@ -502,9 +504,13 @@ public final class RubySession implements AutoCloseable {
         }
     }
 
-    /** Prevents a callback from terminating the runtime currently executing that callback. */
+    /**
+     * Rejects close before acquiring the session monitor while a callback may be waiting for its caller.
+     *
+     * @throws BoxRuntimeException if a block callback is active on the owning operation thread
+     */
     private void rejectCallbackClose() {
-        if (Thread.holdsLock(this) && inCallback) {
+        if (inCallback) {
             throw new BoxRuntimeException("Cannot close the owning JRuby session from its block callback");
         }
     }

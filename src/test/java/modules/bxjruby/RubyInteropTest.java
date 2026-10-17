@@ -5,9 +5,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import ortus.boxlang.runtime.types.DateTime;
+import ortus.boxlang.runtime.types.exceptions.BoxRuntimeException;
 
 /** Exercises additive interoperability through the public session interface. */
 class RubyInteropTest {
@@ -71,6 +77,38 @@ class RubyInteropTest {
             var failure = assertThrows(RubyExecutionException.class, () -> ruby.callWithBlock(null, "invoke", List.of(1), Map.of("scale", 1),
                 args -> { throw new IllegalArgumentException("callback failure"); }));
             assertTrue(failure.getMessage().contains("callback failure"));
+            assertEquals(2L, ruby.eval("1+1").get("value"));
+        }
+    }
+
+    /**
+     * Callback-spawned close attempts fail before waiting for the callback's session monitor.
+     *
+     * @param capture whether the worker uses closeAndCapture rather than close
+     */
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void callbacksRejectCrossThreadClose(boolean capture) {
+        try (var manager = new RubyManager(getClass().getClassLoader(), Map.of());
+             var ruby = manager.create(Map.of(), directory, true);
+             var worker = Executors.newSingleThreadExecutor()) {
+            ruby.eval("def invoke_close_check; puts 'before'; result = yield; puts 'after'; result; end; nil");
+            var result = ruby.callWithBlock(null, "invoke_close_check", List.of(), Map.of(), args -> {
+                var closing = worker.submit(() -> {
+                    if (capture) {
+                        ruby.closeAndCapture();
+                    } else {
+                        ruby.close();
+                    }
+                });
+                var failure = assertThrows(ExecutionException.class, () -> closing.get(2, TimeUnit.SECONDS));
+                assertInstanceOf(BoxRuntimeException.class, failure.getCause());
+                assertTrue(failure.getCause().getMessage().contains("block callback"));
+                assertFalse(ruby.isClosed());
+                return 42;
+            });
+            assertEquals(42L, result.get("value"));
+            assertEquals("before\nafter\n", result.get("stdout"));
             assertEquals(2L, ruby.eval("1+1").get("value"));
         }
     }

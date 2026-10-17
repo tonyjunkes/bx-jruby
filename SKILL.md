@@ -251,8 +251,10 @@ creates an explicit Ruby value, and toBoxLang(handle, type) copies it back.
 
 Use jrubyCall(session, receiver, method, args=[], kwargs={}, block=null) for named
 arguments or synchronous BoxLang closures. The closure must finish on the invoking
-thread and cannot execute in or close its owning session. Retained/cross-thread
-Proc invocation fails. Always close the session in finally.
+thread and cannot execute in its owning session. close() and closeAndCapture()
+reject attempts from any thread while that session's callback is active; close
+after the callback returns. Retained/cross-thread Proc invocation fails. Always
+close the session in finally.
 
 Source contributors should read
 [AGENTS.md](AGENTS.md) for build and language ownership rules.
