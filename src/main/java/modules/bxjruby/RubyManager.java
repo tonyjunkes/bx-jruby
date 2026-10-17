@@ -36,7 +36,9 @@ public final class RubyManager implements AutoCloseable {
      * are invalid
      */
     public synchronized RubySession create(Map<?, ?> options, Path base, boolean handles) {
-        if (closed) throw new BoxRuntimeException("JRuby module is closed");
+        if (closed) {
+            throw new BoxRuntimeException("JRuby module is closed");
+        }
         var session = new RubySession(this, loader, RubyOptions.resolve(defaults, options, base), handles);
         sessions.add(session);
         return session;
@@ -69,7 +71,9 @@ public final class RubyManager implements AutoCloseable {
      * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if shutdown has begun
      */
     public synchronized AutoCloseable beforeClose(Runnable hook) {
-        if (closed) throw new BoxRuntimeException("JRuby module is closed");
+        if (closed) {
+            throw new BoxRuntimeException("JRuby module is closed");
+        }
         closeHooks.add(java.util.Objects.requireNonNull(hook));
         return () -> { synchronized (RubyManager.this) { closeHooks.remove(hook); } };
     }
@@ -96,7 +100,9 @@ public final class RubyManager implements AutoCloseable {
                 else failure.addSuppressed(error);
             }
         }
-        synchronized (this) { outstanding = Set.copyOf(sessions); }
+        synchronized (this) {
+            outstanding = Set.copyOf(sessions);
+        }
         for (var session : outstanding) {
             try { session.close(); }
             catch (RuntimeException error) {
@@ -104,6 +110,8 @@ public final class RubyManager implements AutoCloseable {
                 else failure.addSuppressed(error);
             }
         }
-        if (failure != null) throw failure;
+        if (failure != null) {
+            throw failure;
+        }
     }
 }

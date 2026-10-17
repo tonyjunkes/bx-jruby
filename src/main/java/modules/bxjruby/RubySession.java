@@ -31,6 +31,7 @@ public final class RubySession implements AutoCloseable {
     private RubyOutput stderr;
     private volatile boolean closing;
     private boolean closed;
+    private boolean inCallback;
 
     /**
      * Creates a lazy owned session with immutable options and per-operation output capture.
@@ -55,7 +56,9 @@ public final class RubySession implements AutoCloseable {
      * @throws ortus.boxlang.runtime.types.exceptions.BoxRuntimeException if closing has begun
      */
     private void checkOpen() {
-        if (closing || closed) throw new BoxRuntimeException("JRuby session is closed");
+        if (closing || closed) {
+            throw new BoxRuntimeException("JRuby session is closed");
+        }
     }
 
     /**
@@ -69,7 +72,8 @@ public final class RubySession implements AutoCloseable {
             container = new ScriptingContainer(LocalContextScope.SINGLETHREAD, LocalVariableBehavior.PERSISTENT);
             container.setClassLoader(loader);
             container.setCurrentDirectory(options.workingDirectory().toString());
-            container.setInput(new java.io.ByteArrayInputStream(new byte[0]));
+            container.setInput(new java.io.ByteArrayInputStream(options.stdin()));
+            container.setArgv(options.argv().toArray(String[]::new));
             container.setOutput(stdout);
             container.setError(stderr);
             var environment = new LinkedHashMap<String, String>(System.getenv());
@@ -79,6 +83,42 @@ public final class RubySession implements AutoCloseable {
             container.setEnvironment(environment);
             // These are added to JRuby's default paths, retaining its embedded stdlib.
             if (!options.loadPaths().isEmpty()) container.setLoadPaths(options.loadPaths());
+            if (options.gemfile() != null) {
+                try {
+                    container.runScriptlet("""
+                        begin
+                          require 'bundler'
+                          # Bundler may reset Settings during setup. Suppress automatic
+                          # installers/re-exec at their entry points as well as settings.
+                          class << Bundler
+                            def auto_install
+                              nil
+                            end
+                            def auto_switch
+                              nil
+                            end
+                          end
+                          Bundler.settings.set_command_option(:auto_install, false)
+                          Bundler.settings.set_command_option(:version, 'system')
+                          require 'bundler/setup'
+                          Bundler.settings.set_command_option(:auto_install, false)
+                          Bundler.settings.set_command_option(:version, 'system')
+                        rescue SystemExit => error
+                          raise "Bundler setup attempted to exit with status #{error.status}"
+                        end
+                        nil
+                        """);
+                } catch (RuntimeException error) {
+                    try {
+                        container.terminate();
+                    } catch (RuntimeException cleanup) {
+                        error.addSuppressed(cleanup);
+                    } finally {
+                        container = null;
+                    }
+                    throw error;
+                }
+            }
         }
         return container;
     }
@@ -94,6 +134,9 @@ public final class RubySession implements AutoCloseable {
      */
     private IStruct run(String source, Supplier<Object> operation) {
         checkOpen();
+        if (inCallback) {
+            throw new BoxRuntimeException("Cannot reenter the owning JRuby session from its block callback");
+        }
         stdout = new RubyOutput(options.outputLimit());
         stderr = new RubyOutput(options.outputLimit());
         ClassLoader previous = Thread.currentThread().getContextClassLoader();
@@ -107,7 +150,9 @@ public final class RubySession implements AutoCloseable {
             return Struct.of("value", value, "stdout", stdout.toString(), "stderr", stderr.toString());
         } catch (RuntimeException error) {
             throw new RubyExecutionException(source, error, stdout.toString(), stderr.toString());
-        } finally { Thread.currentThread().setContextClassLoader(previous); }
+        } finally {
+            Thread.currentThread().setContextClassLoader(previous);
+        }
     }
 
     /**
@@ -139,6 +184,40 @@ public final class RubySession implements AutoCloseable {
     }
 
     /**
+     * Evaluates source while retaining even scalar results as session-owned handles.
+     * @param script Ruby source
+     * @param bindings explicit local bindings
+     * @return the usual result envelope with an opaque handle in value
+     */
+    public synchronized IStruct evalHandle(String script, Map<?, ?> bindings) {
+        return run("(eval handle)", () -> {
+            bind(bindings);
+            return handle((IRubyObject) engine().parse(new StringReader(script), "(eval)").run());
+        });
+    }
+
+    /**
+     * Converts a native value explicitly without losing Ruby type or binary encoding.
+     * @param value the native value, ISO date/time string, or owned handle
+     * @param type auto, binary, string, symbol, date, or time
+     * @return a handle owned by this session
+     */
+    public synchronized RubyObject toRuby(Object value, String type) {
+        return (RubyObject) run("toRuby(" + type + ")", () ->
+            handle(RubyConversions.toRuby(value, type, this, engine().getProvider().getRuntime()))).get("value");
+    }
+
+    /**
+     * Copies an owned handle using an explicit conversion without changing default result conversion.
+     * @param value the handle owned by this session
+     * @param type auto, binary, string, symbol, date, or time
+     * @return a native value (date and time produce BoxLang DateTime values)
+     */
+    public synchronized Object toBoxLang(RubyObject value, String type) {
+        return run("toBoxLang(" + type + ")", () -> RubyConversions.toBoxLang(unwrap(value), type, this)).get("value");
+    }
+
+    /**
      * Evaluates a file in this serialized session. Relative paths resolve from its working directory and
      * supplied bindings update locals.
      *
@@ -163,7 +242,9 @@ public final class RubySession implements AutoCloseable {
         Path supplied = Path.of(path);
         Path target = (supplied.isAbsolute() ? supplied : options.workingDirectory().resolve(supplied)).normalize();
         return run(target.toString(), () -> {
-            if (!Files.isRegularFile(target)) throw new BoxRuntimeException("Ruby file not found: " + target);
+            if (!Files.isRegularFile(target)) {
+                throw new BoxRuntimeException("Ruby file not found: " + target);
+            }
             bind(bindings);
             return engine().parse(PathType.ABSOLUTE, target.toString()).run();
         });
@@ -246,16 +327,59 @@ public final class RubySession implements AutoCloseable {
      * @throws RubyExecutionException if invocation or argument/result conversion fails
      */
     public synchronized IStruct call(Object receiver, String method, java.util.List<?> args, Map<?, ?> kwargs) {
+        return callWithBlock(receiver, method, args, kwargs, null);
+    }
+
+    /**
+     * Invokes a method with an operation-scoped synchronous block callback.
+     * @param receiver the receiver or null for top-level methods
+     * @param method the Ruby method name
+     * @param args positional arguments
+     * @param kwargs keyword arguments
+     * @param callback the callback, or null for no block; it must not reenter this session
+     * @return the result envelope
+     */
+    public synchronized IStruct callWithBlock(Object receiver, String method, java.util.List<?> args, Map<?, ?> kwargs,
+            java.util.function.Function<Object[], Object> callback) {
         return run("call(" + method + ")", () -> {
             var ruby = engine().getProvider().getRuntime();
             Object target = receiver == null ? null : RubyValues.toRuby(receiver, this, ruby);
             Object[] positional = args.stream().map(value -> RubyValues.toRuby(value, this, ruby)).toArray();
             var keywords = new LinkedHashMap<String, Object>();
             RubyOptions.normalize(kwargs).forEach((name, value) -> keywords.put(name, RubyValues.toRuby(value, this, ruby)));
-            return keywords.isEmpty()
-                ? engine().callMethod(target, method, positional, IRubyObject.class)
-                : engine().callMethodWithKeywordArgs(target, method, positional, keywords, IRubyObject.class);
+            if (callback == null) {
+                return keywords.isEmpty()
+                    ? engine().callMethod(target, method, positional, IRubyObject.class)
+                    : engine().callMethodWithKeywordArgs(target, method, positional, keywords, IRubyObject.class);
+            }
+            var lease = new RubyBlock(this, callback);
+            try {
+                var block = org.jruby.runtime.CallBlock.newCallClosure(ruby.getCurrentContext(), ruby.getTopSelf(),
+                    org.jruby.runtime.Signature.OPTIONAL, (context, values, nested) -> lease.invoke(values));
+                return engine().callMethodWithKeywordArgs(target, method, positional, keywords, block, IRubyObject.class);
+            } finally {
+                lease.close();
+            }
         });
+    }
+
+    /**
+     * Executes a validated block lease with the session reentry guard enabled.
+     * @param callback the live operation callback
+     * @param values the Ruby yield arguments
+     * @return the callback result converted to Ruby
+     */
+    IRubyObject invokeBlock(java.util.function.Function<Object[], Object> callback, IRubyObject[] values) {
+        Object[] converted = new Object[values.length];
+        for (int i = 0; i < values.length; i++) {
+            converted[i] = RubyValues.fromRuby(values[i], this, true);
+        }
+        inCallback = true;
+        try {
+            return RubyValues.toRuby(callback.apply(converted), this, engine().getProvider().getRuntime());
+        } finally {
+            inCallback = false;
+        }
     }
 
     /**
@@ -279,7 +403,9 @@ public final class RubySession implements AutoCloseable {
      */
     IRubyObject unwrap(RubyObject handle) {
         checkOpen();
-        if (handle.owner != this || handle.value == null) throw new BoxRuntimeException("Ruby object belongs to another or closed JRuby session");
+        if (handle.owner != this || handle.value == null) {
+            throw new BoxRuntimeException("Ruby object belongs to another or closed JRuby session");
+        }
         return handle.value;
     }
 
@@ -331,6 +457,7 @@ public final class RubySession implements AutoCloseable {
      * @return a struct containing exit-handler stdout and stderr
      */
     public IStruct closeAndCapture() {
+        rejectCallbackClose();
         closing = true;
         synchronized (this) {
             if (!closed) {
@@ -354,6 +481,7 @@ public final class RubySession implements AutoCloseable {
      */
     @Override
     public void close() {
+        rejectCallbackClose();
         closing = true;
         synchronized (this) {
             if (closed) return;
@@ -371,6 +499,13 @@ public final class RubySession implements AutoCloseable {
                 objects.clear();
                 manager.release(this);
             }
+        }
+    }
+
+    /** Prevents a callback from terminating the runtime currently executing that callback. */
+    private void rejectCallbackClose() {
+        if (Thread.holdsLock(this) && inCallback) {
+            throw new BoxRuntimeException("Cannot close the owning JRuby session from its block callback");
         }
     }
 }

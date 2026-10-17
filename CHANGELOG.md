@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 (unreleased)
+
+- Move public BIFs, the inline component and descriptor cleanup to native BoxLang.
+- Add copied stdin/ARGV, opt-in Bundler setup, explicit binary/symbol/date/time conversion and scalar handles.
+- Add operation-scoped BoxLang block callbacks through jrubyCall with reentry and lifetime checks.
+- Expand interop regression tests, examples, skills and contributor guidance.
+- Publish a concrete compiled GitHub ZIP location to ForgeBox after the release asset exists; validate the versioned location during builds.
+
 ## 1.1.0
 
 - Make captured close reject new work before waiting for active execution; document the new core options and cleanup API in the agent skill.

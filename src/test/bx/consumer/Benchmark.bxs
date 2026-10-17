@@ -1,0 +1,43 @@
+// Local observations; run unchanged against released and candidate module ZIPs.
+clock = createObject("java", "java.lang.System");
+function measureFactory() {
+    var start = clock.nanoTime();
+    for (var i = 1; i <= 2000; i++) {
+        var ruby = jrubySession();
+        ruby.close();
+    }
+    return (clock.nanoTime() - start) / 2000;
+}
+for (i = 1; i <= 1000; i++) {
+    warmup = jrubySession();
+    warmup.close();
+}
+factory = [];
+for (i = 1; i <= 5; i++) {
+    arrayAppend(factory, measureFactory());
+}
+arraySort(factory, "numeric");
+for (i = 1; i <= 3; i++) {
+    jrubyEval("6*7");
+}
+oneShotStart = clock.nanoTime();
+for (i = 1; i <= 20; i++) {
+    jrubyEval("6*7");
+}
+oneShot = (clock.nanoTime() - oneShotStart) / 20;
+ruby = jrubySession();
+try {
+    for (i = 1; i <= 50; i++) {
+        ruby.eval("6*7");
+    }
+    start = clock.nanoTime();
+    for (i = 1; i <= 1000; i++) {
+        ruby.eval("6*7");
+    }
+    reused = (clock.nanoTime() - start) / 1000;
+} finally {
+    ruby.close();
+}
+observation = {factoryMedianNs: factory[3], oneShotMeanNs: oneShot, reusedEvalMeanNs: reused};
+fileWrite(clock.getProperty("bxjruby.benchmarkOutput"), JSONSerialize(observation));
+println(JSONSerialize(observation));

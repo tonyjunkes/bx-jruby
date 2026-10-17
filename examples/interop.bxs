@@ -1,0 +1,12 @@
+ruby = jrubySession({stdin: "hello", argv: ["first"]});
+try {
+    println(ruby.eval("[STDIN.read, ARGV]").value);
+    println(jrubyCall(session=ruby, receiver=[1,2,3], method="map", block=function(value) {
+        return value * 2;
+    }).value);
+    bytes = binaryDecode("00ff80", "hex");
+    handle = ruby.toRuby(bytes, "binary");
+    println(binaryEncode(ruby.toBoxLang(handle, "binary"), "hex"));
+} finally {
+    ruby.close();
+}

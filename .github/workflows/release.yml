@@ -97,10 +97,6 @@ jobs:
             git tag --annotate "$TAG" --message "Release $TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$TAG"
           fi
-      - name: Publish built package to ForgeBox
-        env:
-          PACKAGE_DIR: ${{ steps.release.outputs.package-dir }}
-        run: box forgebox publish "directory=$PACKAGE_DIR" --force
       - name: Create GitHub release and upload distribution
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,3 +116,7 @@ jobs:
           # Reruns can complete an interrupted upload for the same tagged commit.
           gh release upload "$TAG" "build/distributions/bx-jruby-$VERSION.zip" \
             "build/distributions/bx-jruby-$VERSION.zip.sha256" --clobber
+      - name: Publish built package to ForgeBox
+        env:
+          PACKAGE_DIR: ${{ steps.release.outputs.package-dir }}
+        run: box forgebox publish "directory=$PACKAGE_DIR" --force

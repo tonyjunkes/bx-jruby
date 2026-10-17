@@ -1,0 +1,36 @@
+/** Captures inline Ruby source, preserving caller scope and template early exits. */
+@AllowsBody(true)
+@RequiresBody(true)
+class {
+    property name="moduleRecord";
+
+    /** Receives the original caller context from BoxLang's component proxy. */
+    function invoke(required any context, required struct attributes, required any body, required struct executionState) {
+        if (!structKeyExists(attributes, "variable") || !len(trim(attributes.variable))) {
+            throw(message="jruby requires a non-empty variable attribute");
+        }
+        var bindings = structKeyExists(attributes, "bindings") ? attributes.bindings : {};
+        var options = structKeyExists(attributes, "options") ? attributes.options : {};
+        if (!isStruct(bindings) || !isStruct(options)) {
+            throw(message="jruby bindings and options must be structs");
+        }
+
+        var source = newBuffer();
+        var bodyResult = processBody(arguments.context, arguments.body, source);
+        if (bodyResult.isEarlyExit()) {
+            return bodyResult;
+        }
+
+        var bridge = createObject(
+            type = "java",
+            className = "modules.bxjruby.JRubyRuntime",
+            classLoader = moduleRecord.getModuleClassLoader().toClassLoader()
+        );
+        var result = bridge.evaluate(
+            arguments.context, source.toString(),
+            bindings, options, false
+        );
+        var interpreter = createObject("java", "ortus.boxlang.runtime.dynamic.ExpressionInterpreter");
+        interpreter.setVariable(arguments.context, attributes.variable, result);
+    }
+}

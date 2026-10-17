@@ -52,9 +52,15 @@ final class RubyValues {
      * keys, collisions or disallowed handles
      */
     private static Object fromRuby(Object value, RubySession owner, boolean handles, IdentityHashMap<Object, Boolean> active) {
-        if (value == null || value instanceof RubyNil) return null;
-        if (value instanceof RubyString string) return string.asJavaString();
-        if (value instanceof RubySymbol symbol) return symbol.asJavaString();
+        if (value == null || value instanceof RubyNil) {
+            return null;
+        }
+        if (value instanceof RubyString string) {
+            return string.asJavaString();
+        }
+        if (value instanceof RubySymbol symbol) {
+            return symbol.asJavaString();
+        }
         if (value instanceof RubyBoolean || value instanceof RubyFixnum || value instanceof RubyBignum || value instanceof RubyFloat)
             return ((IRubyObject) value).toJava(Object.class);
         if (value instanceof org.jruby.ext.bigdecimal.RubyBigDecimal decimal) {
@@ -63,7 +69,9 @@ final class RubyValues {
             return decimal.finite_p(context).isTrue()
                 ? decimal.toJava(java.math.BigDecimal.class) : decimal.to_f(context).toJava(Double.class);
         }
-        if (value instanceof JavaProxy proxy) return proxy.getObject();
+        if (value instanceof JavaProxy proxy) {
+            return proxy.getObject();
+        }
         if (value instanceof RubyArray<?> array) {
             enter(value, active);
             try {
@@ -71,7 +79,9 @@ final class RubyValues {
                 for (IRubyObject entry : array.toJavaArray(array.getRuntime().getCurrentContext()))
                     result.add(fromRuby(entry, owner, handles, active));
                 return result;
-            } finally { active.remove(value); }
+            } finally {
+                active.remove(value);
+            }
         }
         if (value instanceof RubyHash hash) {
             enter(value, active);
@@ -83,14 +93,20 @@ final class RubyValues {
                     if (!(key instanceof RubyString) && !(key instanceof RubySymbol))
                         throw new BoxRuntimeException("Ruby hash keys must be strings or symbols for BoxLang conversion");
                     String name = key instanceof RubyString string ? string.asJavaString() : ((RubySymbol) key).asJavaString();
-                    if (result.containsKey(name)) throw new BoxRuntimeException("Ruby hash key conversion collision: " + name);
+                    if (result.containsKey(name)) {
+                        throw new BoxRuntimeException("Ruby hash key conversion collision: " + name);
+                    }
                     result.put(name, fromRuby(entry.getValue(), owner, handles, active));
                 }
                 return result;
-            } finally { active.remove(value); }
+            } finally {
+                active.remove(value);
+            }
         }
         if (value instanceof IRubyObject ruby) {
-            if (!handles) throw new BoxRuntimeException("Ruby object results require jrubySession(); one-shot runtimes are closed after evaluation");
+            if (!handles) {
+                throw new BoxRuntimeException("Ruby object results require jrubySession(); one-shot runtimes are closed after evaluation");
+            }
             return owner.handle(ruby);
         }
         return value;
@@ -124,7 +140,9 @@ final class RubyValues {
      * keys or foreign handles
      */
     private static IRubyObject toRuby(Object value, RubySession owner, Ruby runtime, IdentityHashMap<Object, Boolean> active) {
-        if (value instanceof RubyObject handle) return owner.unwrap(handle);
+        if (value instanceof RubyObject handle) {
+            return owner.unwrap(handle);
+        }
         // A reload creates a new module classloader, so old handles fail instanceof.
         if (value != null && value.getClass().getName().equals(RubyObject.class.getName()))
             throw new BoxRuntimeException("Ruby object belongs to another or closed module activation");
@@ -138,11 +156,15 @@ final class RubyValues {
                     if (!(key instanceof CharSequence) && !(key instanceof ortus.boxlang.runtime.scopes.Key))
                         throw new BoxRuntimeException("BoxLang hash keys must be strings");
                     String name = RubyOptions.name(key);
-                    if (!keys.add(name)) throw new BoxRuntimeException("BoxLang hash key conversion collision: " + name);
+                    if (!keys.add(name)) {
+                        throw new BoxRuntimeException("BoxLang hash key conversion collision: " + name);
+                    }
                     result.op_aset(runtime.getCurrentContext(), runtime.newString(name), toRuby(entry.getValue(), owner, runtime, active));
                 }
                 return result;
-            } finally { active.remove(value); }
+            } finally {
+                active.remove(value);
+            }
         }
         if (value instanceof Iterable<?> entries) {
             enter(value, active);
@@ -150,7 +172,9 @@ final class RubyValues {
                 var result = new ArrayList<IRubyObject>();
                 for (Object entry : entries) result.add(toRuby(entry, owner, runtime, active));
                 return RubyArray.newArray(runtime, result);
-            } finally { active.remove(value); }
+            } finally {
+                active.remove(value);
+            }
         }
         if (value instanceof Object[] entries) {
             enter(value, active);
@@ -158,9 +182,13 @@ final class RubyValues {
                 var result = new ArrayList<IRubyObject>();
                 for (Object entry : entries) result.add(toRuby(entry, owner, runtime, active));
                 return RubyArray.newArray(runtime, result);
-            } finally { active.remove(value); }
+            } finally {
+                active.remove(value);
+            }
         }
-        if (value instanceof IRubyObject) throw new BoxRuntimeException("Pass Ruby objects through session-owned handles");
+        if (value instanceof IRubyObject) {
+            throw new BoxRuntimeException("Pass Ruby objects through session-owned handles");
+        }
         if (value instanceof java.math.BigDecimal decimal) {
             runtime.getTopSelf().callMethod(runtime.getCurrentContext(), "require", runtime.newString("bigdecimal"));
             return new org.jruby.ext.bigdecimal.RubyBigDecimal(runtime, decimal);
@@ -177,6 +205,8 @@ final class RubyValues {
      * recursion path
      */
     private static void enter(Object value, IdentityHashMap<Object, Boolean> active) {
-        if (active.put(value, true) != null) throw new BoxRuntimeException("Cyclic collections cannot be converted between Ruby and BoxLang");
+        if (active.put(value, true) != null) {
+            throw new BoxRuntimeException("Cyclic collections cannot be converted between Ruby and BoxLang");
+        }
     }
 }

@@ -6,7 +6,7 @@ class {
     this.title = "bx-jruby";
     this.author = "Tony Junkes";
     this.description = "JRuby support in BoxLang.";
-    this.version = "1.1.0";
+    this.version = "1.2.0";
     this.mapping = "bxjruby";
 
     function configure() {
@@ -17,7 +17,10 @@ class {
             gemHome: "",
             gemPaths: [],
             env: {},
-            outputLimit: 0
+            outputLimit: 0,
+            stdin: "",
+            argv: [],
+            bundler: false
         };
     }
 
@@ -31,12 +34,25 @@ class {
         variables.runtimeBridge.start(moduleRecord);
     }
 
+    /** Drains runtimes, then removes only descriptors owned by this activation. */
     function onUnload() {
         try {
             if (structKeyExists(variables, "runtimeBridge") && !isNull(variables.runtimeBridge)) {
                 variables.runtimeBridge.stop(boxRuntime, moduleRecord.name.getName());
             }
         } finally {
+            var functions = boxRuntime.getFunctionService();
+            for (var name in ["jrubyEval","jrubyEvalFile","jrubySession","jrubyCall"]) {
+                var descriptor = functions.getGlobalFunction(name);
+                if (!isNull(descriptor) && compareNoCase(descriptor.module, moduleRecord.name.getName()) == 0) {
+                    functions.unregisterGlobalFunction(createObject("java", "ortus.boxlang.runtime.scopes.Key").of(name));
+                }
+            }
+            var components = boxRuntime.getComponentService();
+            var descriptor = components.getComponent("jruby");
+            if (!isNull(descriptor) && compareNoCase(descriptor.module, moduleRecord.name.getName()) == 0) {
+                components.unregisterComponent(createObject("java", "ortus.boxlang.runtime.scopes.Key").of("jruby"));
+            }
             variables.runtimeBridge = null;
         }
     }

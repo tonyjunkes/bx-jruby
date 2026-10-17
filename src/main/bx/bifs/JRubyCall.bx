@@ -1,0 +1,23 @@
+/** Invokes Ruby with positional arguments, keywords and an operation-scoped BoxLang block. */
+class {
+    property name="moduleRecord";
+
+    /** The callback is synchronous and may not reenter the owning session. */
+    function invoke(required any session, any receiver = null, required string method,
+            array args = [], struct kwargs = {}, any block = null) {
+        if (!isNull(arguments.block) && !isCustomFunction(arguments.block)) {
+            throw(message="jrubyCall block must be a BoxLang function");
+        }
+
+        if (!structKeyExists(variables, "bridge")) {
+            variables.bridge = createObject(
+                type = "java",
+                className = "modules.bxjruby.JRubyRuntime",
+                classLoader = moduleRecord.getModuleClassLoader().toClassLoader()
+            );
+        }
+
+        return variables.bridge.call(getBoxContext().getParent(), arguments.session, arguments.receiver,
+            arguments.method, arguments.args, arguments.kwargs, arguments.block);
+    }
+}

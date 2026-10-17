@@ -20,6 +20,10 @@ import ortus.boxlang.runtime.types.exceptions.BoxRuntimeException;
  * @param gemPaths the absolute GEM_PATH entries, empty when inherited
  * @param env the immutable overlay applied to a fresh copy of the process environment
  * @param outputLimit the retained characters per stream and operation, zero for unlimited capture
+ * @param stdin copied bytes exposed through Ruby's standard input
+ * @param argv immutable command-line arguments supplied before initialization
+ * @param gemfile the explicit Bundler Gemfile, or null when Bundler is disabled
+ * @param frozen whether Bundler must preserve an existing lockfile
  */
 record RubyOptions(
     Path workingDirectory,
@@ -27,9 +31,13 @@ record RubyOptions(
     String gemHome,
     List<String> gemPaths,
     Map<String, String> env,
-    int outputLimit
+    int outputLimit,
+    byte[] stdin,
+    List<String> argv,
+    Path gemfile,
+    boolean frozen
 ) {
-    private static final Set<String> SUPPORTED = Set.of("workingdirectory", "loadpaths", "gemhome", "gempaths", "env", "outputlimit");
+    private static final Set<String> SUPPORTED = Set.of("workingdirectory", "loadpaths", "gemhome", "gempaths", "env", "outputlimit", "stdin", "argv", "bundler");
 
     /**
      * Copies keys to strings, preserving case and rejecting invalid types or conversion collisions.
@@ -79,7 +87,9 @@ record RubyOptions(
         Object configuredDirectory = lookup.get("workingdirectory");
         Path directory = configuredDirectory == null || configuredDirectory.toString().isBlank()
             ? base.toAbsolutePath().normalize() : path(base, configuredDirectory.toString());
-        if (!Files.isDirectory(directory)) throw new BoxRuntimeException("JRuby workingDirectory is not a directory: " + directory);
+        if (!Files.isDirectory(directory)) {
+            throw new BoxRuntimeException("JRuby workingDirectory is not a directory: " + directory);
+        }
         Object configuredGemHome = lookup.get("gemhome");
         String gemHome = configuredGemHome == null || configuredGemHome.toString().isBlank()
             ? null : path(directory, configuredGemHome.toString()).toString();
@@ -94,9 +104,92 @@ record RubyOptions(
         if (lookup.containsKey("outputlimit")) {
             try { outputLimit = Integer.parseInt(lookup.get("outputlimit").toString()); }
             catch (RuntimeException error) { throw new BoxRuntimeException("JRuby outputLimit must be a non-negative integer"); }
-            if (outputLimit < 0) throw new BoxRuntimeException("JRuby outputLimit must be a non-negative integer");
+            if (outputLimit < 0) {
+                throw new BoxRuntimeException("JRuby outputLimit must be a non-negative integer");
+            }
         }
-        return new RubyOptions(directory, paths(directory, lookup.get("loadpaths")), gemHome, gemPaths, environment, outputLimit);
+        Object input = lookup.get("stdin");
+        byte[] stdin;
+        if (input == null) {
+            stdin = new byte[0];
+        } else if (input instanceof String text) {
+            stdin = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } else if (input instanceof byte[] bytes) {
+            stdin = bytes.clone();
+        } else {
+            throw new BoxRuntimeException("JRuby stdin must be text or binary data");
+        }
+
+        var argv = new ArrayList<String>();
+        Object suppliedArgs = lookup.get("argv");
+        if (suppliedArgs != null) {
+            if (!(suppliedArgs instanceof Iterable<?> entries)) {
+                throw new BoxRuntimeException("JRuby argv must be an array of strings");
+            }
+            for (Object entry : entries) {
+                if (!(entry instanceof String text) || text.indexOf('\0') >= 0) {
+                    throw new BoxRuntimeException("JRuby argv must contain strings without NUL characters");
+                }
+                argv.add(text);
+            }
+        }
+
+        Path gemfile = null;
+        boolean frozen = false;
+        Object bundle = lookup.get("bundler");
+        if (bundle != null && !Boolean.FALSE.equals(bundle)) {
+            Map<String, Object> settings;
+            if (Boolean.TRUE.equals(bundle)) {
+                settings = Map.of();
+            } else if (bundle instanceof Map<?, ?> map) {
+                settings = new LinkedHashMap<>();
+                normalize(map).forEach((key, value) -> {
+                    String name = key.toLowerCase(Locale.ROOT);
+                    if (!Set.of("gemfile", "frozen").contains(name) || settings.containsKey(name)) {
+                        throw new BoxRuntimeException("Invalid JRuby bundler option: " + key);
+                    }
+                    settings.put(name, value);
+                });
+            } else {
+                throw new BoxRuntimeException("JRuby bundler must be a boolean or settings struct");
+            }
+            Object suppliedFile = settings.getOrDefault("gemfile", "Gemfile");
+            if (!(suppliedFile instanceof String text) || text.isBlank()) {
+                throw new BoxRuntimeException("JRuby bundler.gemfile must be a non-empty path");
+            }
+            gemfile = path(directory, text);
+            if (!Files.isRegularFile(gemfile)) {
+                throw new BoxRuntimeException("JRuby Bundler Gemfile not found: " + gemfile);
+            }
+            Object suppliedFrozen = settings.getOrDefault("frozen", false);
+            if (!(suppliedFrozen instanceof Boolean)) {
+                throw new BoxRuntimeException("JRuby bundler.frozen must be a boolean");
+            }
+            frozen = (Boolean) suppliedFrozen;
+            if (frozen && !Files.isRegularFile(Path.of(gemfile + ".lock"))) {
+                throw new BoxRuntimeException("JRuby frozen Bundler execution requires a lockfile");
+            }
+            var overlay = new LinkedHashMap<>(environment);
+            setBundleEnvironment(overlay, "BUNDLE_GEMFILE", gemfile.toString());
+            setBundleEnvironment(overlay, "BUNDLE_FROZEN", Boolean.toString(frozen));
+            environment = Map.copyOf(overlay);
+        }
+
+        return new RubyOptions(directory, paths(directory, lookup.get("loadpaths")), gemHome, gemPaths,
+            environment, outputLimit, stdin, List.copyOf(argv), gemfile, frozen);
+    }
+
+    /**
+     * Adds a generated Bundler variable while rejecting contradictory explicit configuration.
+     * @param environment the session-local mutable overlay
+     * @param name the generated environment name
+     * @param value the generated value
+     */
+    private static void setBundleEnvironment(Map<String, String> environment, String name, String value) {
+        if (environment.containsKey(name) && !environment.get(name).equals(value)) {
+            throw new BoxRuntimeException("JRuby env." + name + " conflicts with bundler configuration");
+        }
+        environment.put(name, value);
     }
 
     /**
@@ -108,8 +201,12 @@ record RubyOptions(
      * environment strings
      */
     private static Map<String, String> environment(Object value) {
-        if (value == null) return Map.of();
-        if (!(value instanceof Map<?, ?> map)) throw new BoxRuntimeException("JRuby env must be a map of strings");
+        if (value == null) {
+            return Map.of();
+        }
+        if (!(value instanceof Map<?, ?> map)) {
+            throw new BoxRuntimeException("JRuby env must be a map of strings");
+        }
         var result = new LinkedHashMap<String, String>();
         normalize(map).forEach((key, entry) -> {
             if (key.isEmpty() || key.indexOf('=') >= 0 || key.indexOf('\0') >= 0 ||
@@ -132,8 +229,12 @@ record RubyOptions(
         var result = new LinkedHashMap<String, Object>();
         normalize(values).forEach((name, value) -> {
             String key = name.toLowerCase(Locale.ROOT);
-            if (!SUPPORTED.contains(key)) throw new BoxRuntimeException("Unknown JRuby option: " + name);
-            if (result.containsKey(key)) throw new BoxRuntimeException("Duplicate JRuby option: " + name);
+            if (!SUPPORTED.contains(key)) {
+                throw new BoxRuntimeException("Unknown JRuby option: " + name);
+            }
+            if (result.containsKey(key)) {
+                throw new BoxRuntimeException("Duplicate JRuby option: " + name);
+            }
             result.put(key, value);
         });
         return result;
@@ -161,11 +262,17 @@ record RubyOptions(
      * nonblank paths
      */
     private static List<String> paths(Path directory, Object values) {
-        if (values == null) return List.of();
-        if (!(values instanceof Iterable<?> entries)) throw new BoxRuntimeException("JRuby path options must be arrays");
+        if (values == null) {
+            return List.of();
+        }
+        if (!(values instanceof Iterable<?> entries)) {
+            throw new BoxRuntimeException("JRuby path options must be arrays");
+        }
         var result = new ArrayList<String>();
         for (Object entry : entries) {
-            if (entry == null || entry.toString().isBlank()) throw new BoxRuntimeException("JRuby paths must be non-empty strings");
+            if (entry == null || entry.toString().isBlank()) {
+                throw new BoxRuntimeException("JRuby paths must be non-empty strings");
+            }
             result.add(path(directory, entry.toString()).toString());
         }
         return List.copyOf(result);

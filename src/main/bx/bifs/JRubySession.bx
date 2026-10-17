@@ -1,0 +1,17 @@
+/** Native entry point for JRubySession; Java owns runtime execution. */
+class {
+    property name="moduleRecord";
+
+    /** Validates public arguments and resolves this activation's Java bridge. */
+    function invoke(struct options = {}) {
+        if (!structKeyExists(variables, "bridge")) {
+            variables.bridge = createObject(
+                type = "java",
+                className = "modules.bxjruby.JRubyRuntime",
+                classLoader = moduleRecord.getModuleClassLoader().toClassLoader()
+            );
+        }
+
+        return variables.bridge.session(getBoxContext().getParent(), arguments.options);
+    }
+}

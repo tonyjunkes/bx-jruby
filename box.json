@@ -1,7 +1,7 @@
 {
   "name": "BoxLang JRuby Support",
-  "version": "1.1.0",
-  "location": "",
+  "version": "1.2.0",
+  "location": "https://github.com/tonyjunkes/bx-jruby/releases/download/1.2.0/bx-jruby-1.2.0.zip",
   "author": "Tony Junkes",
   "homepage": "https://github.com/tonyjunkes/bx-jruby",
   "documentation": "https://github.com/tonyjunkes/bx-jruby",
@@ -48,7 +48,6 @@
     "gradlew.bat",
     "*.gradle",
     "gradle.properties",
-    "build/**",
-    "examples/**"
+    "build/**"
   ]
 }

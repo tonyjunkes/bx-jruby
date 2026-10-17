@@ -84,6 +84,8 @@ Session methods are Java methods; use positional arguments:
 | --- | --- |
 | `eval(script, bindings={})` | `{ value, stdout, stderr }` |
 | `evalFile(path, bindings={})` | `{ value, stdout, stderr }` |
+| `evalHandle(script, bindings)` | Result envelope containing an owned handle, including scalar results |
+| `toRuby(value, type)` / `toBoxLang(handle, type)` | Explicit typed conversion; see interoperability guide |
 | `put(name, value)` | void; sets a local variable |
 | `get(name)` | Converted local value; null if absent or nil |
 | `call(receiver, method, args=[], kwargs={})` | `{ value, stdout, stderr }` |
@@ -113,6 +115,13 @@ infinity. Ruby hashes become ordered, case-sensitive structs with string/symbol
 keys. Mixed `:name` and `"name"` keys collide and produce an error; non-string/symbol keys and cyclic
 collections also produce errors. Java proxies return their underlying Java
 object. Ruby values such as classes, dates, and rational numbers are handles.
+
+## Input, typed values, blocks and Bundler
+
+Version 1.2.0 adds stdin/argv options, explicit binary/symbol/date/time conversions,
+scalar handles, synchronous Ruby blocks through jrubyCall(), and opt-in Bundler setup.
+See [interoperability](docs/interoperability.md) for examples and exact contracts,
+and the [capability review](docs/capabilities.md) for coverage and remaining gaps.
 
 ## Inline component
 
@@ -166,6 +175,9 @@ in `boxlang.json` under `modules["bxjruby"].settings`:
 | `gemPaths` | `[]` | Sets runtime `GEM_PATH` when nonempty |
 | `env` | `{}` | Runtime-local string environment map, overlaid on inherited environment before initialization |
 | `outputLimit` | `0` | Maximum captured characters per stream per operation; zero is unlimited; truncated captures include a marker |
+| `stdin` | `""` | Copied UTF-8 text or binary input, consumed across session operations |
+| `argv` | `[]` | Copied array of Ruby command-line argument strings |
+| `bundler` | `false` | Explicit Bundler setup; `true` or `{gemfile, frozen}`; see the interoperability guide |
 
 An explicit option replaces that module default; path lists are not merged.
 An explicit `env` map also replaces the default map. Keys are case-sensitive;
@@ -185,8 +197,9 @@ file's actual location.
 Preinstall pure Ruby or Java-platform gems using a matching JRuby installation,
 then point this module at that gem directory. The standard library and packaged
 default gems are included. MRI-native C extensions are not supported. The module
-does not install gems or manage Bundler environments. Runtime pools, forced
-timeouts, and Rails hosting are outside this release.
+never installs gems automatically. Opt-in Bundler setup selects an installed app
+bundle. Runtime pools and forced timeouts remain outside core; framework hosting
+is supplied by sibling [bx-jruby-rack](https://github.com/tonyjunkes/bx-jruby-rack).
 
 ## Failures
 
@@ -216,7 +229,7 @@ The build produces an installable ZIP and SHA-256 checksum under
 install it with CommandBox:
 
 ```sh
-box install /path/to/bx-jruby/build/distributions/bx-jruby-1.1.0.zip
+box install /path/to/bx-jruby/build/distributions/bx-jruby-1.2.0.zip
 ```
 
 Java documentation is generated under `build/docs/javadoc/` with

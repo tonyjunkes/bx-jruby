@@ -1,0 +1,17 @@
+/** Native entry point for JRubyEval; Java owns runtime execution. */
+class {
+    property name="moduleRecord";
+
+    /** Validates public arguments and resolves this activation's Java bridge. */
+    function invoke(required string script, struct bindings = {}, struct options = {}) {
+        if (!structKeyExists(variables, "bridge")) {
+            variables.bridge = createObject(
+                type = "java",
+                className = "modules.bxjruby.JRubyRuntime",
+                classLoader = moduleRecord.getModuleClassLoader().toClassLoader()
+            );
+        }
+
+        return variables.bridge.evaluate(getBoxContext().getParent(), arguments.script, arguments.bindings, arguments.options, false);
+    }
+}
